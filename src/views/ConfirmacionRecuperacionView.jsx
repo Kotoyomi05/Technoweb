@@ -1,6 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 
-export default function ConfirmacionRecuperacionView({ onBackToLogin }) {
+export default function ConfirmacionRecuperacionView({
+  email = 'ejemplo@techservice.com',
+  onBackToLogin,
+  onContinueReset,
+}) {
+  const [resent, setResent] = useState(false);
+  const displayEmail = email || 'ejemplo@techservice.com';
+
+  const handleResend = () => {
+    setResent(true);
+  };
+
   return (
     <main className="min-h-[calc(100vh-160px)] flex flex-col items-center justify-center px-4 py-12">
       {/* Encabezado Superior */}
@@ -12,7 +23,6 @@ export default function ConfirmacionRecuperacionView({ onBackToLogin }) {
 
       {/* Tarjeta de Confirmación */}
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-8 max-w-md w-full text-center space-y-6">
-        
         {/* Ícono verde de éxito */}
         <div className="flex justify-center">
           <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center border-2 border-emerald-500 text-emerald-600">
@@ -36,7 +46,7 @@ export default function ConfirmacionRecuperacionView({ onBackToLogin }) {
               </svg>
             </span>
             <p className="leading-relaxed">
-              Se ha enviado un correo electrónico a <span className="font-bold text-gray-900">ejemplo@techservice.com</span> con las instrucciones para restablecer su contraseña.
+              Se ha enviado un correo electrónico a <span className="font-bold text-gray-900">{displayEmail}</span> con las instrucciones para restablecer su contraseña.
             </p>
           </div>
           <p className="text-gray-500 leading-relaxed pt-1 border-t border-gray-200/60">
@@ -44,29 +54,50 @@ export default function ConfirmacionRecuperacionView({ onBackToLogin }) {
           </p>
         </div>
 
+        {resent && (
+          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl px-3.5 py-2.5 text-xs font-medium text-left">
+            Correo reenviado a <strong>{displayEmail}</strong>.
+          </div>
+        )}
+
         {/* Siguientes Pasos */}
         <div className="pt-2">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4 text-left">
             Siguientes Pasos
           </p>
-          
+
           <div className="space-y-3">
-            <button 
+            {onContinueReset && (
+              <button
+                type="button"
+                onClick={onContinueReset}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-xs uppercase tracking-wider transition shadow-sm cursor-pointer"
+              >
+                RESTABLECER CONTRASEÑA AHORA
+              </button>
+            )}
+
+            <button
+              type="button"
               onClick={onBackToLogin}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-xs uppercase tracking-wider transition shadow-sm cursor-pointer"
+              className={`w-full ${
+                onContinueReset
+                  ? 'bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-sm'
+              } py-2.5 rounded-lg text-xs uppercase tracking-wider transition cursor-pointer`}
             >
               IR A LA PÁGINA DE INICIO (LOGIN)
             </button>
-            
-            <button 
-              onClick={() => alert('Correo reevaluado y reenviado.')}
+
+            <button
+              type="button"
+              onClick={handleResend}
               className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2.5 rounded-lg text-xs uppercase tracking-wider transition cursor-pointer"
             >
               REENVIAR CORREO DE RECUPERACIÓN
             </button>
           </div>
         </div>
-
       </div>
     </main>
   );

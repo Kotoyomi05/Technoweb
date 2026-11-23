@@ -1,11 +1,19 @@
 import React, { useState } from 'react';
 
-export default function RecuperarPasswordView({ onBackToLogin, onSendSuccess }) {
-  const [email, setEmail] = useState('');
+export default function RecuperarPasswordView({
+  email: initialEmail = '',
+  onBackToLogin,
+  onSendSuccess,
+}) {
+  const [email, setEmail] = useState(initialEmail);
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSendSuccess();
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) return;
+    if (onSendSuccess) {
+      onSendSuccess(cleanEmail);
+    }
   };
 
   return (
@@ -34,12 +42,12 @@ export default function RecuperarPasswordView({ onBackToLogin, onSendSuccess }) 
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                 </svg>
               </span>
-              <input 
-                type="email" 
+              <input
+                type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="ejemplo@techservice.com" 
+                placeholder="ladie7854@gmail.com"
                 className="w-full bg-gray-50/50 border border-gray-300 rounded-lg pl-9 pr-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
               />
             </div>
@@ -49,7 +57,7 @@ export default function RecuperarPasswordView({ onBackToLogin, onSendSuccess }) 
             Se enviará un enlace único a su dirección de correo electrónico para restablecer su contraseña. Este enlace caducará en 60 minutos.
           </p>
 
-          <button 
+          <button
             type="submit"
             className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-xs uppercase tracking-wider transition shadow-sm cursor-pointer mt-2"
           >
@@ -57,7 +65,7 @@ export default function RecuperarPasswordView({ onBackToLogin, onSendSuccess }) 
           </button>
         </form>
 
-        <button 
+        <button
           type="button"
           onClick={onBackToLogin}
           className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2.5 rounded-lg text-xs uppercase tracking-wider transition cursor-pointer"

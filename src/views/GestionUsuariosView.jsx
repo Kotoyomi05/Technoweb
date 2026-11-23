@@ -1,243 +1,456 @@
 import React, { useState } from 'react';
+import { mockUser, usersList } from '../data/userData';
 
-export default function GestionUsuariosView({ onBack }) {
-  const [searchTerm, setSearchTerm] = useState('Nombre de usuario o rol...');
-  const [estadoFilter, setEstadoFilter] = useState('Todos');
-  const [rolFilter, setRolFilter] = useState('Todos');
+const DEFAULT_USER_PASSWORD = 'techno123';
 
-  const usuarios = [
-    {
-      id: '[U-001]',
-      nombre: '[Jack Rowe]',
-      rol: '[Técnico Senior]',
-      email: '[j.rowe@techserviceweb.com]',
-      ultimoAcceso: '[09/09/2024 16:02]',
-      estado: 'Activo',
-      estadoTipo: 'activo',
-      accionBloqueo: 'Bloquear'
-    },
-    {
-      id: '[U-002]',
-      nombre: '[Ana García]',
-      rol: '[Técnico]',
-      email: '[a.garcia@techserviceweb.com]',
-      ultimoAcceso: '[09/09/2024 14:30]',
-      estado: 'Activo',
-      estadoTipo: 'activo',
-      accionBloqueo: 'Bloquear'
-    },
-    {
-      id: '[U-003]',
-      nombre: '[Carlos Ruiz]',
-      rol: '[Recepción]',
-      email: '[c.ruiz@techserviceweb.com]',
-      ultimoAcceso: '[09/09/2024 11:15]',
-      estado: 'Activo',
-      estadoTipo: 'activo',
-      accionBloqueo: 'Bloquear'
-    },
-    {
-      id: '[U-004]',
-      nombre: '[María Torres]',
-      rol: '[Auditor]',
-      email: '[m.torres@techserviceweb.com]',
-      ultimoAcceso: '[08/09/2024 09:05]',
-      estado: 'Activo',
-      estadoTipo: 'activo',
-      accionBloqueo: 'Bloquear'
-    },
-    {
-      id: '[U-010]',
-      nombre: '[Pedro Gómez]',
-      rol: '[Técnico]',
-      email: '[p.gomez@techserviceweb.com]',
-      ultimoAcceso: '[N/A]',
-      estado: 'Inactivo',
-      estadoTipo: 'inactivo',
-      accionBloqueo: 'Habilitar'
+export default function GestionUsuariosView({
+  currentUser = mockUser,
+  users = usersList,
+  accessRequests = [],
+  onApproveRequest,
+  onRejectRequest,
+  onDeleteUser,
+  onBack,
+}) {
+  const roleLower = (currentUser?.rol || '').toLowerCase();
+  const isAdmin = roleLower.includes('admin');
+  const isTech = roleLower.includes('tecn') || roleLower.includes('técn');
+  const canApproveRequests = isAdmin || isTech;
+
+  const allowedRoles = isAdmin ? ['Administrador', 'Técnico'] : ['Técnico'];
+
+  const [selectedRoles, setSelectedRoles] = useState({});
+  const [filterStatus, setFilterStatus] = useState('Todas');
+  const [approvalNotice, setApprovalNotice] = useState(null);
+  // Guarda por userId si el computador del cliente ya fue marcado como entregado
+  const [deliveredClients, setDeliveredClients] = useState({});
+
+  const adminsList = users.filter((u) => (u.rol || '').toLowerCase().includes('admin'));
+  const techniciansList = users.filter((u) => {
+    const r = (u.rol || '').toLowerCase();
+    return r.includes('tecn') || r.includes('técn');
+  });
+  const clientsList = users.filter((u) => (u.rol || '').toLowerCase().includes('client'));
+
+  const isSameUser = (u) =>
+    String(u.id) === String(currentUser?.id) ||
+    (u.email || '').toLowerCase() === (currentUser?.email || '').toLowerCase();
+
+  const canRemoveUser = (targetUser) => {
+    const targetRole = (targetUser.rol || '').toLowerCase();
+    const targetIsAdmin = targetRole.includes('admin');
+    const targetIsTech = targetRole.includes('tecn') || targetRole.includes('técn');
+    const targetIsClient = targetRole.includes('client');
+    const self = isSameUser(targetUser);
+
+    // Ningún administrador puede ser eliminado (ni a sí mismo ni por otro admin)[cite: 2]
+    if (targetIsAdmin) {
+      return false;
     }
-  ];
+
+    if (isAdmin) {
+      return targetIsTech || targetIsClient;
+    }
+
+    if (isTech) {
+      return (targetIsTech && self) || targetIsClient;
+    }
+
+    return self && targetIsClient;
+  };
+
+  const getAssignedRole = (req) => {
+    const chosen = selectedRoles[req.id];
+    if (chosen && allowedRoles.includes(chosen)) {
+      return chosen;
+    }
+    if (req.cargo && allowedRoles.includes(req.cargo)) {
+      return req.cargo;
+    }
+    return allowedRoles.includes('Técnico') ? 'Técnico' : allowedRoles[0];
+  };
+
+  const handleRoleSelect = (reqId, roleValue) => {
+    if (!allowedRoles.includes(roleValue)) return;
+    setSelectedRoles((prev) => ({ ...prev, [reqId]: roleValue }));
+  };
+
+  const handleApproveAction = (req, assignedRole) => {
+    if (onApproveRequest) {
+      onApproveRequest(req.id, assignedRole);
+    }
+    setApprovalNotice({
+      nombre: req.nombre,
+      correo: req.correo,
+      rol: assignedRole,
+      password: DEFAULT_USER_PASSWORD,
+    });
+  };
+
+  const toggleDelivered = (clientId) => {
+    setDeliveredClients((prev) => ({
+      ...prev,
+      [clientId]: !prev[clientId],
+    }));
+  };
+
+  const filteredRequests = accessRequests.filter((req) => {
+    if (filterStatus === 'Todas') return true;
+    return req.estado === filterStatus;
+  });
+
+  const renderUserCard = (u, category) => {
+    const self = isSameUser(u);
+    const removable = canRemoveUser(u);
+    const isDelivered = Boolean(deliveredClients[u.id]);
+    const isClientCard = category === 'client';
+
+    // Para clientes: si lo elimina admin o técnico, se exige "Computador entregado" primero
+    const needsDeliveryLock = isClientCard && !self && (isAdmin || isTech);
+    const canDeleteNow = removable && (!needsDeliveryLock || isDelivered);
+
+    let actionLabel = 'Eliminar';
+    if (self && !category.startsWith('admin')) {
+      actionLabel = 'Darme de baja';
+    } else if (isClientCard && needsDeliveryLock) {
+      actionLabel = 'Retirar cliente';
+    }
+
+    return (
+      <div
+        key={u.id || u.email}
+        className="min-w-[265px] max-w-[285px] shrink-0 bg-gray-50/70 border border-gray-200 rounded-xl p-4 flex flex-col justify-between gap-3"
+      >
+        <div className="flex items-start gap-3">
+          <img
+            src={u.avatar}
+            alt={u.nombre}
+            className="w-11 h-11 rounded-full object-cover border border-gray-200 bg-white shrink-0"
+          />
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <p className="font-bold text-xs text-gray-900 truncate">{u.nombre}</p>
+              {self && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                  Tú
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-gray-600 truncate">{u.email}</p>
+            <span className="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white text-gray-700 border border-gray-200">
+              {u.rol}
+            </span>
+          </div>
+        </div>
+
+        <div className="text-[11px] text-gray-500 border-t border-gray-200/70 pt-2">
+          <span className="truncate block">{u.direccion || 'Sin ubicación asignada'}</span>
+        </div>
+
+        {/* Controles específicos para clientes (candado de computador entregado) */}
+        {isClientCard && needsDeliveryLock && removable && (
+          <button
+            type="button"
+            onClick={() => toggleDelivered(u.id)}
+            className={`w-full py-1.5 px-2.5 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+              isDelivered
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+            }`}
+          >
+            {isDelivered ? '✓ Computador entregado' : 'Marcar: Computador entregado'}
+          </button>
+        )}
+
+        {/* Botón de eliminación / auto-baja */}
+        {category === 'admin' ? (
+          <span className="text-[10px] text-gray-400 font-medium text-center py-1">
+            {self ? 'Protegido (Tu cuenta Admin)' : 'Protegido (Cuenta Administrador)'}
+          </span>
+        ) : removable ? (
+          <button
+            type="button"
+            disabled={!canDeleteNow}
+            onClick={() => onDeleteUser && onDeleteUser(u.id)}
+            title={
+              !canDeleteNow
+                ? 'Primero marca "Computador entregado" para habilitar la eliminación'
+                : actionLabel
+            }
+            className={`w-full py-1.5 px-3 rounded-lg text-[11px] font-bold transition ${
+              canDeleteNow
+                ? 'bg-rose-600 hover:bg-rose-700 text-white cursor-pointer'
+                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+            }`}
+          >
+            {actionLabel}
+          </button>
+        ) : (
+          <span className="text-[10px] text-gray-400 font-medium text-center py-1">
+            Sin permiso para eliminar
+          </span>
+        )}
+      </div>
+    );
+  };
 
   return (
-    <main className="max-w-7xl mx-auto px-6 py-8">
-      {/* Botón Volver */}
-      <button 
-        onClick={onBack} 
-        className="text-sm text-blue-600 hover:underline mb-4 flex items-center space-x-1 cursor-pointer font-medium"
-      >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7"></path>
-        </svg>
-        <span>Volver al Dashboard</span>
-      </button>
+    <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <span className="text-xs font-semibold tracking-wider text-gray-500 uppercase block">
+            PERSONAL Y CLIENTES DEL TALLER • {currentUser?.rol}
+          </span>
+          <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight uppercase">
+            GESTIÓN DE USUARIOS
+          </h1>
+          <p className="text-xs text-gray-600 mt-1">
+            Listados horizontales por rol, auto-baja disponible para técnicos y clientes, y
+            validación de computador entregado para clientes.
+          </p>
+        </div>
 
-      {/* Encabezado */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 tracking-tight uppercase">
-          CONFIGURACIÓN DE USUARIOS Y PERMISOS DE ACCESO
-        </h1>
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="px-4 py-2 rounded-lg text-xs font-semibold bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 transition cursor-pointer"
+          >
+            ← Volver al Dashboard
+          </button>
+        )}
       </div>
 
-      {/* Grid Principal */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-        
-        {/* Directorio de Usuarios (2 Columnas) */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm space-y-4">
-          <h3 className="font-semibold text-gray-900 text-base">
-            Directorio de Usuarios del Sistema
-          </h3>
+      {/* 1. Listado Horizontal: Administradores */}
+      <section className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
+        <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+          <div>
+            <h2 className="text-base font-bold text-gray-900 uppercase">
+              Administradores ({adminsList.length})
+            </h2>
+            <p className="text-xs text-gray-500">
+              Ningún administrador puede ser eliminado (ni por sí mismo ni por otro administrador).[cite: 2]
+            </p>
+          </div>
+        </div>
 
-          {/* Buscador y Filtro por Estado */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+        {adminsList.length === 0 ? (
+          <p className="text-xs text-gray-500 py-4">No hay administradores registrados.</p>
+        ) : (
+          <div className="flex gap-4 overflow-x-auto pb-2">
+            {adminsList.map((u) => renderUserCard(u, 'admin'))}
+          </div>
+        )}
+      </section>
+
+      {/* 2. Listado Horizontal: Técnicos */}
+      <section className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
+        <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+          <div>
+            <h2 className="text-base font-bold text-gray-900 uppercase">
+              Técnicos ({techniciansList.length})
+            </h2>
+            <p className="text-xs text-gray-500">
+              El administrador puede eliminar técnicos; los técnicos solo pueden darse de baja a sí
+              mismos.
+            </p>
+          </div>
+        </div>
+
+        {techniciansList.length === 0 ? (
+          <p className="text-xs text-gray-500 py-4">No hay técnicos registrados.</p>
+        ) : (
+          <div className="flex gap-4 overflow-x-auto pb-2">
+            {techniciansList.map((u) => renderUserCard(u, 'tech'))}
+          </div>
+        )}
+      </section>
+
+      {/* 3. Listado Horizontal: Clientes */}
+      <section className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-4">
+        <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+          <div>
+            <h2 className="text-base font-bold text-gray-900 uppercase">
+              Clientes ({clientsList.length})
+            </h2>
+            <p className="text-xs text-gray-500">
+              Para retirar a un cliente tras finalizar el trabajo, primero marca{' '}
+              <strong>Computador entregado</strong>. Los clientes también pueden darse de baja.
+            </p>
+          </div>
+        </div>
+
+        {clientsList.length === 0 ? (
+          <p className="text-xs text-gray-500 py-4">No hay clientes registrados.</p>
+        ) : (
+          <div className="flex gap-4 overflow-x-auto pb-2">
+            {clientsList.map((u) => renderUserCard(u, 'client'))}
+          </div>
+        )}
+      </section>
+
+      {/* Bandeja de Solicitudes de Acceso (solo Admin y Técnico) */}
+      {canApproveRequests && (
+        <section className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-4">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Buscar:</label>
-              <div className="relative w-full sm:w-64">
-                <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-                  </svg>
-                </span>
-                <input 
-                  type="text" 
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Nombre de usuario o rol..." 
-                  className="w-full bg-white border border-gray-300 rounded-lg pl-9 pr-3 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
-                />
+              <h2 className="text-base font-bold text-gray-900 uppercase">
+                Solicitudes de Activación de Cuenta
+              </h2>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {isAdmin
+                  ? 'Como Administrador puedes asignar el rol de Administrador o Técnico.'
+                  : 'Consulta el estado de las solicitudes de acceso del taller (la aprobación corresponde al Administrador).'}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs">
+              {['Todas', 'Pendiente', 'Aprobada', 'Rechazada'].map((status) => (
+                <button
+                  key={status}
+                  type="button"
+                  onClick={() => setFilterStatus(status)}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition cursor-pointer ${
+                    filterStatus === status
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {approvalNotice && (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl p-4 text-xs flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-1">
+                <p className="font-bold">
+                  Persona aceptada: {approvalNotice.nombre} ({approvalNotice.correo}) con rol{' '}
+                  {approvalNotice.rol}.
+                </p>
+                <p className="text-emerald-800">
+                  La contraseña de esta cuenta es:{' '}
+                  <strong className="font-mono bg-white border border-emerald-300 px-2 py-0.5 rounded text-emerald-900">
+                    {approvalNotice.password}
+                  </strong>{' '}
+                  — entrégasela al usuario para que inicie sesión y luego pueda cambiarla en su
+                  perfil.
+                </p>
               </div>
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-medium text-gray-600">Estado:</span>
-              <select 
-                value={estadoFilter} 
-                onChange={(e) => setEstadoFilter(e.target.value)}
-                className="bg-white border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+              <button
+                type="button"
+                onClick={() => setApprovalNotice(null)}
+                className="text-xs font-semibold text-emerald-800 hover:underline cursor-pointer"
               >
-                <option value="Todos">Todos</option>
-                <option value="Activo">Activo</option>
-                <option value="Bloqueado">Bloqueado</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Filtros Rápidos por Rol */}
-          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
-            {['Todos', 'Técnico', 'Administrador', 'Recepción', 'Auditor'].map((rol, idx) => (
-              <button 
-                key={idx}
-                onClick={() => setRolFilter(rol)}
-                className={`px-3 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
-                  rolFilter === rol 
-                    ? 'bg-blue-50 border-blue-300 text-blue-700 font-bold' 
-                    : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                {rol}
+                Cerrar mensaje
               </button>
-            ))}
-          </div>
+            </div>
+          )}
 
-          {/* Tabla de Usuarios */}
-          <div className="overflow-x-auto border-t border-gray-100 pt-3">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-gray-50/70 text-xs font-semibold text-gray-600 uppercase tracking-wider border-b border-gray-200">
-                  <th className="py-2.5 px-3">ID</th>
-                  <th className="py-2.5 px-3">Nombre Completo</th>
-                  <th className="py-2.5 px-3">Rol Asignado</th>
-                  <th className="py-2.5 px-3">Correo Electrónico</th>
-                  <th className="py-2.5 px-3">Último Acceso</th>
-                  <th className="py-2.5 px-3">Estado</th>
-                  <th className="py-2.5 px-3 text-center">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 text-xs">
-                {usuarios.map((usr) => (
-                  <tr key={usr.id} className="hover:bg-gray-50/50 transition">
-                    <td className="py-3 px-3 font-semibold text-gray-800">{usr.id}</td>
-                    <td className="py-3 px-3 font-bold text-gray-900">{usr.nombre}</td>
-                    <td className="py-3 px-3 font-medium text-gray-700">{usr.rol}</td>
-                    <td className="py-3 px-3 text-gray-600">{usr.email}</td>
-                    <td className="py-3 px-3 font-mono text-gray-600">{usr.ultimoAcceso}</td>
-                    <td className="py-3 px-3 font-semibold">
-                      {usr.estadoTipo === 'activo' ? (
-                        <span className="inline-flex items-center space-x-1 text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-[11px]">
-                          <span>[✓</span>
-                          <span>Activo]</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center space-x-1 text-rose-700 font-bold bg-rose-50 px-2 py-0.5 rounded border border-rose-200 text-[11px]">
-                          <span>❌</span>
-                          <span>Inactivo]</span>
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-3 space-y-1">
-                      <button className="block bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-700 px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer w-full text-center">
-                        Botón: Editar
-                      </button>
-                      <button className="block bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-700 px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer w-full text-center">
-                        Botón: Permisos
-                      </button>
-                      <button className="block bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-700 px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer w-full text-center">
-                        Botón: {usr.accionBloqueo}
-                      </button>
-                    </td>
+          {filteredRequests.length === 0 ? (
+            <div className="text-center py-8 text-xs text-gray-500 bg-gray-50 rounded-xl border border-gray-100">
+              No hay solicitudes en el estado seleccionado.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-gray-200 text-[11px] font-bold text-gray-500 uppercase">
+                    <th className="py-2.5 px-3">Nombre</th>
+                    <th className="py-2.5 px-3">Correo</th>
+                    <th className="py-2.5 px-3">Taller / Cargo</th>
+                    <th className="py-2.5 px-3">Estado</th>
+                    <th className="py-2.5 px-3">Rol a Asignar</th>
+                    <th className="py-2.5 px-3 text-right">Acciones</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filteredRequests.map((req) => {
+                    const isPending = req.estado === 'Pendiente';
+                    const assignedRole = getAssignedRole(req);
 
-        {/* Panel Lateral: Resumen de Acceso (1 Columna) */}
-        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm space-y-5 h-fit">
-          <h3 className="font-semibold text-gray-900 text-base border-b border-gray-100 pb-3">
-            Resumen de Acceso
-          </h3>
-
-          <div className="space-y-4 text-xs">
-            <div>
-              <span className="text-gray-600 font-medium block">Total de Usuarios Activos:</span>
-              <p className="text-sm font-bold text-gray-900 mt-0.5">[42]</p>
+                    return (
+                      <tr key={req.id} className="hover:bg-gray-50/70">
+                        <td className="py-3 px-3 font-semibold text-gray-900">{req.nombre}</td>
+                        <td className="py-3 px-3 text-gray-700">{req.correo}</td>
+                        <td className="py-3 px-3 text-gray-600">
+                          <div className="font-medium text-gray-800">{req.taller || '—'}</div>
+                          <div className="text-[11px] text-gray-500">{req.cargo || '—'}</div>
+                        </td>
+                        <td className="py-3 px-3">
+                          <span
+                            className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                              req.estado === 'Aprobada'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : req.estado === 'Rechazada'
+                                ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                : 'bg-amber-50 text-amber-700 border border-amber-200'
+                            }`}
+                          >
+                            {req.estado}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3">
+                          {isPending ? (
+                            <select
+                              value={assignedRole}
+                              onChange={(e) => handleRoleSelect(req.id, e.target.value)}
+                              disabled={!isAdmin}
+                              className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-600"
+                            >
+                              {allowedRoles.map((roleOpt) => (
+                                <option key={roleOpt} value={roleOpt}>
+                                  {roleOpt}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <div className="space-y-0.5">
+                              <span className="font-semibold text-gray-700 block">
+                                {req.rolAsignado || '—'}
+                              </span>
+                              {req.estado === 'Aprobada' && (
+                                <span className="text-[11px] text-gray-500 font-mono block">
+                                  Clave: {req.passwordAsignada || DEFAULT_USER_PASSWORD}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-right space-x-2 whitespace-nowrap">
+                          {isPending && isAdmin ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleApproveAction(req, assignedRole)}
+                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition cursor-pointer"
+                              >
+                                Aprobar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onRejectRequest && onRejectRequest(req.id)}
+                                className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold transition cursor-pointer"
+                              >
+                                Rechazar
+                              </button>
+                            </>
+                          ) : isPending ? (
+                            <span className="text-[11px] text-gray-400">Solo Administrador</span>
+                          ) : (
+                            <span className="text-[11px] text-gray-400">Procesada</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-
-            <div className="pt-2 border-t border-gray-100">
-              <span className="text-gray-600 font-medium block">Roles Definidos:</span>
-              <p className="text-sm font-bold text-gray-900 mt-0.5">[5]</p>
-            </div>
-
-            <div className="pt-2 border-t border-gray-100">
-              <span className="text-gray-600 font-medium block">Licencias de Técnico en Uso:</span>
-              <p className="text-sm font-bold text-gray-900 mt-0.5">[42 / 50]</p>
-            </div>
-
-            <div className="pt-2 border-t border-gray-100">
-              <span className="text-gray-600 font-medium block">Último Usuario Creado:</span>
-              <p className="text-xs font-bold text-gray-900 mt-0.5">[Ana García]</p>
-              <span className="text-[11px] text-gray-500 block">(01/09/2024)</span>
-            </div>
-          </div>
-        </div>
-
-      </div>
-
-      {/* Botones de Acción Inferiores */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <button className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2.5 rounded-lg text-xs uppercase tracking-wider transition shadow-sm cursor-pointer">
-            PF-14: CREAR NUEVO USUARIO DEL SISTEMA
-          </button>
-          <button className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium px-6 py-2.5 rounded-lg text-xs uppercase tracking-wider transition shadow-sm cursor-pointer">
-            EXPORTAR LISTADO DE USUARIOS (CSV)
-          </button>
-        </div>
-
-        <button className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2.5 rounded-lg text-xs uppercase tracking-wider transition shadow-sm cursor-pointer">
-          GESTIONAR ROLES Y PERMISOS
-        </button>
-      </div>
+          )}
+        </section>
+      )}
     </main>
   );
 }
