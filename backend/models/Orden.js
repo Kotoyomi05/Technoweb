@@ -31,12 +31,14 @@ const medicionSchema = new mongoose.Schema(
 
 const seguimientoSchema = new mongoose.Schema(
   {
-    id: { type: String, default: '' },
+    id: { type: mongoose.Schema.Types.Mixed, default: '' },
     fecha: { type: mongoose.Schema.Types.Mixed, default: null },
     titulo: { type: String, default: '' },
     accion: { type: String, default: '' },
     responsable: { type: String, default: '' },
     notaTecnica: { type: String, default: '' },
+    proximosPasos: { type: String, default: '' },
+    adjuntos: { type: [mongoose.Schema.Types.Mixed], default: [] },
   },
   { _id: true }
 );
@@ -49,6 +51,8 @@ const ordenSchema = new mongoose.Schema(
     cedulaCliente: { type: String, trim: true, default: '' },
     telefonoCliente: { type: String, trim: true, default: '' },
     correoCliente: { type: String, trim: true, default: '' },
+    ubicacionCliente: { type: String, trim: true, default: '' },
+    direccionCliente: { type: String, trim: true, default: '' },
     tipoEquipo: { type: String, trim: true, default: '' },
     marca: { type: String, trim: true, default: '' },
     modelo: { type: String, trim: true, default: '' },
@@ -88,11 +92,34 @@ const ordenSchema = new mongoose.Schema(
       trim: true,
       default: '',
     },
+    detalleDiagnostico: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    proximosPasos: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    imagenDiagnostico: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+    adjuntoDiagnostico: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+    adjuntos: {
+      type: [mongoose.Schema.Types.Mixed],
+      default: [],
+    },
     repuestosAsignados: {
       type: [mongoose.Schema.Types.Mixed],
       default: [],
     },
     tecnicoAsignado: { type: String, trim: true, default: '[Sin Asignar]' },
+    mesaTrabajo: { type: String, trim: true, default: '' },
     seguimiento: [seguimientoSchema],
     avances: [avanceSchema],
     mediciones: [medicionSchema],

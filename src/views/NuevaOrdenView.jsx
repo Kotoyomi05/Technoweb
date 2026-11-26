@@ -12,6 +12,18 @@ function normalizarTexto(valor = '') {
     .toLowerCase();
 }
 
+function construirEnlaceSeguimiento(idOrden) {
+  const cleanId = String(idOrden || '').trim();
+  if (!cleanId) return '';
+  try {
+    const url = new URL(window.location.origin + window.location.pathname);
+    url.searchParams.set('orden', cleanId);
+    return url.toString();
+  } catch {
+    return `${window.location.origin}/?orden=${encodeURIComponent(cleanId)}`;
+  }
+}
+
 export default function NuevaOrdenView({
   currentUser,
   users = usersList,
@@ -65,6 +77,34 @@ export default function NuevaOrdenView({
     setCorreoCliente(cliente?.email || '');
     setUbicacionCliente(cliente?.direccion || cliente?.ubicacion || '');
     setBusquedaCliente(cliente?.nombre || '');
+  };
+
+  const enviarCorreoInvitacionCliente = async (ordenCreada) => {
+    const idOrdenFinal = ordenCreada?.idOrden || ordenCreada?._id;
+    const correoDestino = ordenCreada?.correoCliente || correoCliente.trim().toLowerCase();
+    if (!idOrdenFinal || !correoDestino) return;
+
+    const enlaceSeguimiento = construirEnlaceSeguimiento(idOrdenFinal);
+
+    try {
+      await fetch(`${API_URL}/notificaciones/invitacion-seguimiento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: correoDestino,
+          nombreCliente: ordenCreada?.cliente || nombreCliente.trim(),
+          idOrden: idOrdenFinal,
+          equipo: [ordenCreada?.tipoEquipo, ordenCreada?.marca, ordenCreada?.modelo]
+            .filter(Boolean)
+            .join(' '),
+          descripcionFalla: ordenCreada?.descripcionFalla || descripcionFalla.trim(),
+          fechaIngreso: ordenCreada?.fechaCreacion || new Date().toISOString(),
+          enlaceSeguimiento,
+        }),
+      });
+    } catch {
+      // No interrumpe el flujo si el servidor SMTP está offline
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -138,6 +178,8 @@ export default function NuevaOrdenView({
       creadoPor: currentUser?.nombre || 'Administrador',
     };
 
+    let ordenFinal = ordenLocal;
+
     try {
       const res = await fetch(`${API_URL}/ordenes`, {
         method: 'POST',
@@ -147,18 +189,17 @@ export default function NuevaOrdenView({
 
       if (res.ok) {
         const data = await res.json().catch(() => null);
-        const ordenCreada = data?.orden || data || ordenLocal;
-        setSubmitting(false);
-        if (onSaveSuccess) onSaveSuccess(ordenCreada);
-        return;
+        ordenFinal = data?.orden || data || ordenLocal;
       }
     } catch {
       // Si el backend está apagado, guarda localmente de todos modos
     }
 
+    await enviarCorreoInvitacionCliente(ordenFinal);
+
     setSubmitting(false);
     if (onSaveSuccess) {
-      onSaveSuccess(ordenLocal);
+      onSaveSuccess(ordenFinal);
     }
   };
 
@@ -366,7 +407,7 @@ export default function NuevaOrdenView({
             disabled={submitting}
             className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-xs font-extrabold uppercase tracking-wide transition cursor-pointer"
           >
-            {submitting ? 'GUARDANDO...' : 'PF-02: CREAR ORDEN Y ASIGNAR TÉCNICO'}
+            {submitting ? 'GUARDANDO Y ENVIANDO CORREO...' : 'PF-02: CREAR ORDEN Y ASIGNAR TÉCNICO'}
           </button>
 
           <button

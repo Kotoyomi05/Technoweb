@@ -143,13 +143,18 @@ export default function DiagnosticoView({
     const detalleFinal =
       detalleLimpio || ordenData.detalleDiagnostico || ordenData.notaTecnica || '';
     const proximosFinales = proximosLimpios || ordenData.proximosPasos || '';
+    const tituloAvance = `Avance / Diagnóstico (${formData.estadoActualizado})`;
+    const descripcionAvance =
+      detalleLimpio || proximosLimpios || 'Actualización registrada en el diagnóstico técnico.';
 
     const nuevoPasoSeguimiento = {
       id: Date.now(),
       fecha: new Date().toISOString(),
-      titulo: `Avance / Diagnóstico (${formData.estadoActualizado})`,
-      accion: `Avance / Diagnóstico (${formData.estadoActualizado})`,
+      titulo: tituloAvance,
+      accion: tituloAvance,
+      estadoOrden: formData.estadoActualizado,
       responsable: responsableSinCargo,
+      descripcion: descripcionAvance,
       notaTecnica: detalleFinal,
       proximosPasos: proximosFinales,
       adjuntos: formData.adjuntos,
@@ -159,6 +164,9 @@ export default function DiagnosticoView({
       ...(Array.isArray(ordenData.seguimiento) ? ordenData.seguimiento : []),
       nuevoPasoSeguimiento,
     ];
+
+    const avancesPrevios = Array.isArray(ordenData.avances) ? ordenData.avances : [];
+    let avancesActualizados = [...avancesPrevios, nuevoPasoSeguimiento];
 
     const payloadActualizacion = {
       estado: formData.estadoActualizado,
@@ -179,11 +187,12 @@ export default function DiagnosticoView({
     let docFinal = {
       ...ordenData,
       ...payloadActualizacion,
+      avances: avancesActualizados,
     };
 
     if (ordenId) {
       try {
-        const res = await fetch(`${API_URL}/ordenes/${ordenId}`, {
+        const res = await fetch(`${API_URL}/ordenes/${encodeURIComponent(ordenId)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payloadActualizacion),
@@ -207,11 +216,54 @@ export default function DiagnosticoView({
                 Array.isArray(servidorDoc.seguimiento) && servidorDoc.seguimiento.length > 0
                   ? servidorDoc.seguimiento
                   : seguimientoActualizado,
+              avances:
+                Array.isArray(servidorDoc.avances) && servidorDoc.avances.length > 0
+                  ? servidorDoc.avances
+                  : avancesActualizados,
             };
           }
         }
       } catch {
-        // Si el backend no tiene aún este PATCH, se conserva la actualización en el estado
+        // Si el backend no responde al PATCH, se conserva la actualización en el estado
+      }
+
+      try {
+        const resAvance = await fetch(
+          `${API_URL}/ordenes/${encodeURIComponent(ordenId)}/avances`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              titulo: tituloAvance,
+              accion: tituloAvance,
+              descripcion: descripcionAvance,
+              notaTecnica: detalleFinal,
+              proximosPasos: proximosFinales,
+              estadoOrden: formData.estadoActualizado,
+              responsable: responsableSinCargo,
+            }),
+          }
+        );
+
+        if (resAvance.ok) {
+          const dataAvance = await resAvance.json().catch(() => null);
+          const ordenConAvance = dataAvance?.orden || dataAvance;
+          if (Array.isArray(dataAvance?.avances)) {
+            avancesActualizados = dataAvance.avances;
+          } else if (Array.isArray(ordenConAvance?.avances)) {
+            avancesActualizados = ordenConAvance.avances;
+          } else if (dataAvance?.avance) {
+            avancesActualizados = [...avancesPrevios, dataAvance.avance];
+          }
+
+          docFinal = {
+            ...docFinal,
+            ...(ordenConAvance && typeof ordenConAvance === 'object' ? ordenConAvance : {}),
+            avances: avancesActualizados,
+          };
+        }
+      } catch (err) {
+        console.error('Error al registrar avance en el backend:', err);
       }
     }
 

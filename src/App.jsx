@@ -3,6 +3,7 @@ import NuevaOrdenView from './views/NuevaOrdenView';
 import FichaTecnicaView from './views/FichaTecnicaView';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
+import PortalSeguimientoClienteView from './components/PortalSeguimientoClienteView';
 import LoginView from './views/LoginView';
 import RecuperarPasswordView from './views/RecuperarPasswordView';
 import ConfirmacionRecuperacionView from './views/ConfirmacionRecuperacionView';
@@ -53,6 +54,7 @@ import ConfiguracionSeguridadAvanzadaView from './views/ConfiguracionSeguridadAv
 import ConfiguracionIntegracionesExportacionView from './views/ConfiguracionIntegracionesExportacionView';
 import ConfiguracionMensajesExportacionView from './views/ConfiguracionMensajesExportacionView';
 import ConfiguracionComunicacionesNotificacionesView from './views/ConfiguracionComunicacionesNotificacionesView';
+import ConfiguracionBackupRecuperacionViewAlias from './views/ConfiguracionBackupRecuperacionView';
 import MedidorDispositivosView from './views/MedidorDispositivosView';
 import { mockUser, usersList } from './data/userData';
 
@@ -130,7 +132,7 @@ function esRolCliente(usuario) {
 function leerOrdenIdDesdeUrl() {
   try {
     const params = new URLSearchParams(window.location.search);
-    const porQuery = params.get('orden') || params.get('order') || params.get('portal');
+    const porQuery = params.get('orden') || params.get('id') || params.get('order') || params.get('portal');
     if (porQuery) return String(porQuery).trim();
 
     const hash = String(window.location.hash || '');
@@ -142,324 +144,17 @@ function leerOrdenIdDesdeUrl() {
   return '';
 }
 
-function construirEnlacePortalOrden(orden) {
-  const id = encodeURIComponent(String(orden?.idOrden || orden?._id || orden?.id || '').trim());
-  if (!id) return '';
+function limpiarParametroOrdenEnUrl() {
   try {
     const url = new URL(window.location.href);
-    url.searchParams.set('orden', decodeURIComponent(id));
-    return url.toString();
+    url.searchParams.delete('orden');
+    url.searchParams.delete('id');
+    url.searchParams.delete('order');
+    url.searchParams.delete('portal');
+    window.history.replaceState({}, '', url.toString());
   } catch {
-    return `?orden=${id}`;
+    // Ignorar errores de history
   }
-}
-
-function extraerAdjuntoDiagnostico(orden) {
-  if (!orden) return null;
-  const candidatos = [
-    orden.imagenDiagnostico,
-    orden.adjuntoDiagnostico,
-    orden.fotoDiagnostico,
-    orden.imagenAvance,
-    orden.adjuntoAvance,
-    orden.evidencia,
-    orden.imagen,
-    orden.foto,
-    orden.adjunto,
-    orden.diagnostico?.imagen,
-    orden.diagnostico?.adjunto,
-    orden.diagnostico?.foto,
-    orden.avance?.imagen,
-    orden.avance?.adjunto,
-  ];
-
-  for (const cand of candidatos) {
-    if (!cand) continue;
-    if (typeof cand === 'string' && cand.trim()) {
-      return { url: cand.trim(), nombre: 'Evidencia de diagnóstico' };
-    }
-    if (typeof cand === 'object') {
-      const url = cand.url || cand.dataUrl || cand.base64 || cand.preview || cand.src || '';
-      if (url) {
-        return {
-          url,
-          nombre: cand.nombre || cand.name || cand.fileName || 'Adjunto de diagnóstico',
-        };
-      }
-    }
-  }
-
-  if (Array.isArray(orden.adjuntos)) {
-    const primero = orden.adjuntos.find((a) =>
-      typeof a === 'string' ? a.trim() : Boolean(a?.url || a?.dataUrl || a?.base64 || a?.src)
-    );
-    if (primero) {
-      return typeof primero === 'string'
-        ? { url: primero, nombre: 'Adjunto de diagnóstico' }
-        : {
-            url: primero.url || primero.dataUrl || primero.base64 || primero.src,
-            nombre: primero.nombre || primero.name || 'Adjunto de diagnóstico',
-          };
-    }
-  }
-
-  return null;
-}
-
-function formatearFechaHora(fecha) {
-  if (!fecha) return 'No registrada';
-  const d = new Date(fecha);
-  if (Number.isNaN(d.getTime())) return String(fecha);
-  return d.toLocaleString('es-CO', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function PortalSeguimientoClienteView({
-  orden,
-  users = [],
-  onActualizarOrdenes,
-  onSalirPortal,
-}) {
-  const [copiado, setCopiado] = useState(false);
-  const [actualizando, setActualizando] = useState(false);
-
-  const refrescarOrden = async () => {
-    setActualizando(true);
-    try {
-      const res = await fetch(`${API_URL}/ordenes`);
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        const lista = Array.isArray(data) ? data : data?.ordenes || [];
-        if (Array.isArray(lista) && lista.length > 0 && onActualizarOrdenes) {
-          onActualizarOrdenes((prev) =>
-            fusionarOrdenes(prev, fusionarOrdenes(ORDENES_INICIALES_DEMO, lista))
-          );
-        }
-      }
-    } catch {
-      // Mantiene datos locales si no hay red
-    } finally {
-      setActualizando(false);
-    }
-  };
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      refrescarOrden();
-    }, 8000);
-    return () => clearInterval(timer);
-  }, []);
-
-  if (!orden) {
-    return (
-      <main className="max-w-3xl mx-auto px-4 py-12">
-        <div className="bg-white border border-gray-200 rounded-2xl p-8 text-center space-y-4 shadow-sm">
-          <h1 className="text-xl font-extrabold text-gray-900 uppercase">
-            Enlace de seguimiento no encontrado
-          </h1>
-          <p className="text-xs text-gray-600">
-            No encontramos una orden asociada a este enlace. Verifica con el taller que el código
-            de la orden sea correcto.
-          </p>
-          {onSalirPortal && (
-            <button
-              type="button"
-              onClick={onSalirPortal}
-              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer"
-            >
-              Ir al inicio de sesión
-            </button>
-          )}
-        </div>
-      </main>
-    );
-  }
-
-  const tecnicoNombre = orden.tecnicoAsignado || 'Por asignar';
-  const tecnicoObj = users.find(
-    (u) => normalizarTexto(u?.nombre) === normalizarTexto(orden.tecnicoAsignado)
-  );
-  const mesaTrabajo =
-    orden.mesaTrabajo ||
-    orden.mesaAsignada ||
-    tecnicoObj?.mesaTrabajo ||
-    tecnicoObj?.bancoTrabajo ||
-    'Por asignar';
-
-  const estadoActual = String(orden.estadoFinal || orden.estado || 'EN PROCESO - Ingresado')
-    .replace(/^\[|\]$/g, '')
-    .trim();
-
-  const detalleDiagnostico =
-    orden.detalleDiagnostico ||
-    orden.diagnosticoTecnico ||
-    orden.diagnostico?.detalle ||
-    orden.diagnostico ||
-    'Aún no se ha registrado un diagnóstico técnico detallado.';
-
-  const proximosPasos =
-    orden.proximosPasos ||
-    orden.accionesSeguir ||
-    orden.diagnostico?.proximosPasos ||
-    orden.notasTecnicas ||
-    orden.observaciones ||
-    'Sin notas adicionales por el momento.';
-
-  const adjunto = extraerAdjuntoDiagnostico(orden);
-  const enlaceCompartible = construirEnlacePortalOrden(orden);
-
-  const copiarEnlace = async () => {
-    try {
-      await navigator.clipboard.writeText(enlaceCompartible);
-      setCopiado(true);
-      setTimeout(() => setCopiado(false), 2500);
-    } catch {
-      setCopiado(false);
-    }
-  };
-
-  return (
-    <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-extrabold uppercase tracking-wider text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full">
-              Acceso directo sin contraseña
-            </span>
-            <span className="text-xs font-semibold text-gray-500">
-              Orden #{orden.idOrden || orden._id}
-            </span>
-          </div>
-          <h1 className="text-2xl font-extrabold text-gray-900 uppercase">
-            Seguimiento en Tiempo Real — {[orden.tipoEquipo, orden.marca, orden.modelo].filter(Boolean).join(' ') || 'Equipo'}
-          </h1>
-          <p className="text-xs text-gray-600">
-            Cliente: <strong className="text-gray-900">{orden.cliente || orden.nombreCliente || 'Cliente'}</strong> • Ingreso:{' '}
-            <strong className="text-gray-900">
-              {formatearFechaHora(orden.fechaCreacion || orden.createdAt)}
-            </strong>
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={refrescarOrden}
-            disabled={actualizando}
-            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-800 transition cursor-pointer"
-          >
-            {actualizando ? 'Actualizando...' : 'Actualizar ahora'}
-          </button>
-          <button
-            type="button"
-            onClick={copiarEnlace}
-            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white transition cursor-pointer"
-          >
-            {copiado ? '✓ Enlace copiado' : 'Copiar enlace del cliente'}
-          </button>
-        </div>
-      </div>
-
-      {/* Estado y asignación */}
-      <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm space-y-1">
-          <span className="text-[11px] font-bold uppercase text-gray-400">
-            Proceso / Estado actual
-          </span>
-          <p className="text-sm font-extrabold text-blue-700">{estadoActual}</p>
-        </div>
-
-        <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm space-y-1">
-          <span className="text-[11px] font-bold uppercase text-gray-400">
-            Técnico encargado
-          </span>
-          <p className="text-sm font-extrabold text-gray-900">{tecnicoNombre}</p>
-        </div>
-
-        <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm space-y-1">
-          <span className="text-[11px] font-bold uppercase text-gray-400">
-            Mesa de trabajo
-          </span>
-          <p className="text-sm font-extrabold text-gray-900">{mesaTrabajo}</p>
-        </div>
-      </section>
-
-      {/* Fallas, diagnóstico y notas */}
-      <section className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-5">
-        <h2 className="text-sm font-extrabold text-gray-900 uppercase border-b border-gray-100 pb-3">
-          Fallas, Diagnóstico y Notas del Técnico
-        </h2>
-
-        <div className="space-y-1.5">
-          <h3 className="text-xs font-bold text-gray-700 uppercase">
-            Falla reportada al ingresar
-          </h3>
-          <p className="text-xs text-gray-800 bg-gray-50 border border-gray-200/80 rounded-xl p-3.5 leading-relaxed">
-            {orden.descripcionFalla || 'Sin descripción de falla registrada.'}
-          </p>
-        </div>
-
-        <div className="space-y-1.5">
-          <h3 className="text-xs font-bold text-gray-700 uppercase">
-            Detalle del diagnóstico técnico
-          </h3>
-          <p className="text-xs text-gray-800 bg-gray-50 border border-gray-200/80 rounded-xl p-3.5 leading-relaxed">
-            {detalleDiagnostico}
-          </p>
-        </div>
-
-        <div className="space-y-1.5">
-          <h3 className="text-xs font-bold text-gray-700 uppercase">
-            Próximos pasos / Notas del encargado
-          </h3>
-          <p className="text-xs text-gray-800 bg-gray-50 border border-gray-200/80 rounded-xl p-3.5 leading-relaxed">
-            {proximosPasos}
-          </p>
-        </div>
-      </section>
-
-      {/* Evidencia / Imagen del diagnóstico */}
-      <section className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-4">
-        <h2 className="text-sm font-extrabold text-gray-900 uppercase border-b border-gray-100 pb-3">
-          Foto / Adjunto Subido en Diagnóstico
-        </h2>
-
-        {!adjunto ? (
-          <p className="text-xs text-gray-500 italic">
-            El técnico aún no ha subido ninguna imagen o documento de diagnóstico para esta orden.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-xs font-semibold text-gray-700">{adjunto.nombre}</p>
-            {adjunto.url.startsWith('data:image/') ||
-            /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(adjunto.url) ? (
-              <div className="border border-gray-200 rounded-xl overflow-hidden bg-gray-50 max-w-xl">
-                <img
-                  src={adjunto.url}
-                  alt={adjunto.nombre}
-                  className="w-full max-h-96 object-contain"
-                />
-              </div>
-            ) : (
-              <a
-                href={adjunto.url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-block px-4 py-2 rounded-xl bg-blue-50 text-blue-700 border border-blue-200 text-xs font-bold hover:bg-blue-100 transition"
-              >
-                Abrir archivo adjunto ({adjunto.nombre})
-              </a>
-            )}
-          </div>
-        )}
-      </section>
-    </main>
-  );
 }
 
 function puedeAccederAOrden(orden, usuario) {
@@ -620,16 +315,16 @@ function fusionarOrdenes(locales = [], remotas = []) {
       tecnicoRemoto.toLowerCase() !== 'sin asignar';
 
     mapa.set(k, {
-      ...o,
       ...previa,
+      ...o,
       estado: yaCerradaLocal ? previa.estado : o.estado || previa?.estado,
       estadoFinal: yaCerradaLocal
         ? previa.estadoFinal || previa.estado
         : o.estadoFinal || previa?.estadoFinal,
       cerrada: yaCerradaLocal ? true : Boolean(o.cerrada),
       entregado: yaCerradaLocal ? true : Boolean(o.entregado || o.cerrada),
-      mesaTrabajo: previa?.mesaTrabajo || o?.mesaTrabajo || null,
-      fechaSalida: previa?.fechaSalida || o?.fechaSalida || null,
+      mesaTrabajo: o?.mesaTrabajo || previa?.mesaTrabajo || null,
+      fechaSalida: o?.fechaSalida || previa?.fechaSalida || null,
       tecnicoAsignado: tieneTecnicoRemoto ? tecnicoRemoto : tecnicoPrevio || o.tecnicoAsignado || '',
     });
   });
@@ -753,6 +448,25 @@ export default function App() {
       window.removeEventListener('hashchange', handleUrlChange);
     };
   }, []);
+
+  useEffect(() => {
+    if (!portalOrdenId) return;
+    let activo = true;
+
+    fetch(`${API_URL}/ordenes/${encodeURIComponent(portalOrdenId)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const doc = data?.orden || data;
+        if (activo && doc && (doc._id || doc.idOrden || doc.id)) {
+          setOrdenes((prev) => fusionarOrdenes([doc], prev));
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      activo = false;
+    };
+  }, [portalOrdenId]);
 
   useEffect(() => {
     try {
@@ -902,8 +616,8 @@ export default function App() {
   }, []);
 
   const resolverPestanaSegura = (tab) => {
-    if (portalUsuarioInvitado) return 'portalCliente';
-    if (esRolCliente(activeUser) && TABS_RESTRINGIDOS_CLIENTE.includes(tab)) {
+    const usuarioReferencia = portalUsuarioInvitado ? currentUser : activeUser;
+    if (esRolCliente(usuarioReferencia) && TABS_RESTRINGIDOS_CLIENTE.includes(tab)) {
       return 'ordenes';
     }
     return tab;
@@ -1215,6 +929,8 @@ export default function App() {
   };
 
   const handleLoginSuccess = (authenticatedUser) => {
+    limpiarParametroOrdenEnUrl();
+    setPortalOrdenId('');
     if (authenticatedUser) {
       const latestUser =
         users.find(
@@ -1505,12 +1221,30 @@ export default function App() {
   };
 
   const handleTabChange = (tab) => {
+    if (portalOrdenId) {
+      limpiarParametroOrdenEnUrl();
+      setPortalOrdenId('');
+      if (!loadSavedAuthState()) {
+        setIsAuthenticated(false);
+        setAuthView('login');
+        return;
+      }
+    }
     setActiveTab(resolverPestanaSegura(tab));
     setCurrentView('main');
     setCancelMessage(false);
   };
 
   const handleNavigate = (tab, view = 'main') => {
+    if (portalOrdenId) {
+      limpiarParametroOrdenEnUrl();
+      setPortalOrdenId('');
+      if (!loadSavedAuthState()) {
+        setIsAuthenticated(false);
+        setAuthView('login');
+        return;
+      }
+    }
     setActiveTab(resolverPestanaSegura(tab));
     setCurrentView(view);
     setCancelMessage(false);
@@ -1524,15 +1258,7 @@ export default function App() {
     } catch {
       // Ignorar si localStorage no está disponible
     }
-    try {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('orden');
-      url.searchParams.delete('order');
-      url.searchParams.delete('portal');
-      window.history.replaceState({}, '', url.toString());
-    } catch {
-      // Ignorar errores de history
-    }
+    limpiarParametroOrdenEnUrl();
     setPortalOrdenId('');
     setIsAuthenticated(false);
     setCurrentUser(mockUser);
@@ -1631,7 +1357,7 @@ export default function App() {
   return (
     <div className="bg-gray-50 min-h-screen flex flex-col justify-between font-sans text-gray-800">
       <div>
-        {isAuthenticated && !portalUsuarioInvitado && (
+        {isAuthenticated && !portalOrdenId && (
           <Navbar
             activeTab={activeTab}
             setActiveTab={handleTabChange}
@@ -1645,12 +1371,19 @@ export default function App() {
           />
         )}
 
-        {portalUsuarioInvitado ? (
+        {portalOrdenId ? (
           <PortalSeguimientoClienteView
-            orden={ordenPortalActual}
-            users={users}
-            onActualizarOrdenes={setOrdenes}
-            onSalirPortal={handleLogout}
+            ordenes={ordenes}
+            user={activeUser}
+            onVolverLogin={handleLogout}
+            onNavigate={(tab) => handleNavigate(tab, 'main')}
+            onLogout={handleLogout}
+            onOpenProfile={() => {
+              limpiarParametroOrdenEnUrl();
+              setPortalOrdenId('');
+              setActiveTab('perfil');
+              setCurrentView('main');
+            }}
           />
         ) : !isAuthenticated ? (
           <>
@@ -2098,7 +1831,7 @@ export default function App() {
             )}
 
             {activeTab === 'configuracionBackupRecuperacion' && !esRolCliente(activeUser) && (
-              <ConfiguracionBackupRecuperacionView onBack={() => setCurrentView('dashboard')} />
+              <ConfiguracionBackupRecuperacionViewAlias onBack={() => setCurrentView('dashboard')} />
             )}
           </>
         )}
