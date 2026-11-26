@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from 'react';
 
+const MAX_EQUIPOS_POR_TECNICO = 3;
+
 function formatFechaCorta(fecha) {
   if (!fecha) return '—';
   const d = new Date(fecha);
@@ -63,7 +65,6 @@ function esOrdenFinalizada(orden) {
   return coincideEstadoCerrado || (tieneSeguimientoCierre && combinado.includes('finaliz'));
 }
 
-// Solo se considera "Ocupado" mientras el trabajo NO haya acabado
 function esOrdenActiva(orden) {
   return !esOrdenFinalizada(orden);
 }
@@ -78,6 +79,18 @@ function quitarCargoSiExiste(nombreRaw = '') {
 
 function getOrdenIdentificador(orden) {
   return String(orden?._id || orden?.idOrden || orden?.id || '').trim();
+}
+
+function construirEnlaceSeguimientoCliente(orden) {
+  const id = String(orden?.idOrden || orden?._id || orden?.id || '').trim();
+  if (!id) return '';
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set('orden', id);
+    return url.toString();
+  } catch {
+    return `?orden=${encodeURIComponent(id)}`;
+  }
 }
 
 export default function DetalleOrdenView({
@@ -95,6 +108,7 @@ export default function DetalleOrdenView({
   const [showTecnicoModal, setShowTecnicoModal] = useState(false);
   const [selectedTecnicoId, setSelectedTecnicoId] = useState('');
   const [assignFeedback, setAssignFeedback] = useState('');
+  const [enlaceCopiado, setEnlaceCopiado] = useState(false);
 
   const ordenData = orden || {};
   const ordenFinalizada = esOrdenFinalizada(ordenData);
@@ -145,6 +159,19 @@ export default function DetalleOrdenView({
 
   const puedeGestionarOrden = esAdmin || esOrdenDeEsteTecnico;
 
+  const enlaceCliente = construirEnlaceSeguimientoCliente(ordenData);
+
+  const handleCopiarEnlaceCliente = async () => {
+    if (!enlaceCliente) return;
+    try {
+      await navigator.clipboard.writeText(enlaceCliente);
+      setEnlaceCopiado(true);
+      setTimeout(() => setEnlaceCopiado(false), 2500);
+    } catch {
+      setEnlaceCopiado(false);
+    }
+  };
+
   const tecnicosDisponibles = useMemo(() => {
     return (Array.isArray(users) ? users : []).filter((u) => {
       const rolLower = normalizarNombre(u?.rol);
@@ -152,7 +179,6 @@ export default function DetalleOrdenView({
     });
   }, [users]);
 
-  // Órdenes activas (no acabadas) que tiene a cargo un técnico
   const getOrdenesActivasTecnico = (tecnicoNombre) => {
     const cleanTarget = normalizarNombre(tecnicoNombre);
     if (!cleanTarget) return [];
@@ -178,7 +204,7 @@ export default function DetalleOrdenView({
     );
 
     const ordenesACargo = getOrdenesActivasTecnico(tecnicoAsignadoNombre);
-    const estaOcupado = ordenesACargo.length > 0;
+    const estaLleno = ordenesACargo.length >= MAX_EQUIPOS_POR_TECNICO;
 
     return {
       nombre: matchUser?.nombre || tecnicoAsignadoNombre,
@@ -188,7 +214,9 @@ export default function DetalleOrdenView({
         estado: String(o.estado || 'En Proceso').replace(/^\[|\]$/g, '').trim(),
       })),
       cantidadACargo: ordenesACargo.length,
-      estadoDisponibilidad: estaOcupado ? 'Ocupado' : 'Disponible',
+      estadoDisponibilidad: estaLleno
+        ? `Ocupado (${ordenesACargo.length}/${MAX_EQUIPOS_POR_TECNICO})`
+        : `Disponible (${ordenesACargo.length}/${MAX_EQUIPOS_POR_TECNICO})`,
       sede: matchUser?.direccion || matchUser?.sede || matchUser?.taller || 'No especificada',
     };
   }, [tieneTecnicoAsignado, tecnicoAsignadoNombre, tecnicosDisponibles, ordenes]);
@@ -207,7 +235,6 @@ export default function DetalleOrdenView({
       return;
     }
 
-    // Regla 1: No puede haber dos técnicos en una misma computadora
     if (tieneTecnicoAsignado) {
       setAssignFeedback(
         `Este computador ya tiene asignado a ${tecnicoAsignadoNombre}. No se puede asignar otro técnico.`
@@ -225,15 +252,15 @@ export default function DetalleOrdenView({
     );
     if (!tecnicoElegido) return;
 
-    // Regla 2: Si el técnico está Ocupado en algún trabajo activo, no puede ser seleccionado
     const activasTecnico = getOrdenesActivasTecnico(tecnicoElegido.nombre);
-    if (activasTecnico.length > 0) {
+    if (activasTecnico.length >= MAX_EQUIPOS_POR_TECNICO) {
       setAssignFeedback(
-        `${tecnicoElegido.nombre} está Ocupado terminando otro trabajo. Podrá volver a seleccionarse solo cuando acabe y pase a Disponible.`
+        `${tecnicoElegido.nombre} ya alcanzó el máximo de ${MAX_EQUIPOS_POR_TECNICO} equipos activos a la vez. Podrá recibir otro cuando finalice alguno.`
       );
       return;
     }
 
+    const nuevaCarga = activasTecnico.length + 1;
     const seguimientoPrevio = Array.isArray(ordenData.seguimiento) ? ordenData.seguimiento : [];
     const nuevoEventoAsignacion = {
       id: `asig-${Date.now()}`,
@@ -252,7 +279,9 @@ export default function DetalleOrdenView({
       onAssignTecnico(ordenConSeguimiento, tecnicoElegido.nombre);
     }
     setSelectedTecnicoId('');
-    setAssignFeedback(`Técnico ${tecnicoElegido.nombre} asignado. Su estado ahora es Ocupado.`);
+    setAssignFeedback(
+      `Técnico ${tecnicoElegido.nombre} asignado (${nuevaCarga}/${MAX_EQUIPOS_POR_TECNICO} equipos activos).`
+    );
   };
 
   const partesEquipo = [
@@ -306,10 +335,20 @@ export default function DetalleOrdenView({
         <span>Volver a Órdenes</span>
       </button>
 
-      <div className="mb-8">
+      <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-bold text-gray-900 tracking-tight uppercase">
           DETALLE COMPLETO DE ORDEN DE SERVICIO
         </h1>
+
+        {!esCliente && enlaceCliente && (
+          <button
+            type="button"
+            onClick={handleCopiarEnlaceCliente}
+            className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition cursor-pointer"
+          >
+            {enlaceCopiado ? '✓ Enlace del cliente copiado' : 'Copiar enlace cliente'}
+          </button>
+        )}
       </div>
 
       {esCliente && !esOrdenDeEsteCliente && (
@@ -406,14 +445,18 @@ export default function DetalleOrdenView({
                 >
                   <option value="">Seleccionar técnico disponible...</option>
                   {tecnicosDisponibles.map((tec) => {
-                    const estaOcupado = getOrdenesActivasTecnico(tec.nombre).length > 0;
+                    const cargaActual = getOrdenesActivasTecnico(tec.nombre).length;
+                    const estaLleno = cargaActual >= MAX_EQUIPOS_POR_TECNICO;
                     return (
                       <option
                         key={tec.id || tec._id}
                         value={tec.id || tec._id}
-                        disabled={estaOcupado}
+                        disabled={estaLleno}
                       >
-                        {tec.nombre} — {estaOcupado ? 'Ocupado (no disponible)' : 'Disponible'}
+                        {tec.nombre} —{' '}
+                        {estaLleno
+                          ? `Ocupado (${cargaActual}/${MAX_EQUIPOS_POR_TECNICO})`
+                          : `Disponible (${cargaActual}/${MAX_EQUIPOS_POR_TECNICO})`}
                       </option>
                     );
                   })}
@@ -437,7 +480,9 @@ export default function DetalleOrdenView({
                   <span className="font-semibold text-gray-800">Supervisión de asignación:</span>{' '}
                   Equipo asignado a{' '}
                   <span className="font-semibold text-gray-900">{tecnicoAsignadoNombre}</span> (
-                  {perfilTecnicoActual?.estadoDisponibilidad || 'Disponible'}).
+                  {perfilTecnicoActual?.estadoDisponibilidad ||
+                    `Disponible (0/${MAX_EQUIPOS_POR_TECNICO})`}
+                  ).
                 </p>
                 <button
                   type="button"
@@ -646,7 +691,7 @@ export default function DetalleOrdenView({
                 </span>
                 <span
                   className={`inline-block mt-1 px-2.5 py-0.5 rounded-full font-semibold text-[11px] ${
-                    perfilTecnicoActual.estadoDisponibilidad === 'Ocupado'
+                    perfilTecnicoActual.cantidadACargo >= MAX_EQUIPOS_POR_TECNICO
                       ? 'bg-amber-100 text-amber-800'
                       : 'bg-emerald-100 text-emerald-800'
                   }`}
@@ -664,7 +709,8 @@ export default function DetalleOrdenView({
 
               <div>
                 <span className="text-gray-500 font-semibold uppercase block text-[10px]">
-                  Computadores a cargo ({perfilTecnicoActual.cantidadACargo}):
+                  Computadores a cargo ({perfilTecnicoActual.cantidadACargo}/
+                  {MAX_EQUIPOS_POR_TECNICO}):
                 </span>
                 {perfilTecnicoActual.computadoresACargo.length === 0 ? (
                   <p className="text-gray-600 mt-0.5">Ninguno asignado actualmente</p>

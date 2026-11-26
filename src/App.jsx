@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import NuevaOrdenView from './views/NuevaOrdenView';
 import FichaTecnicaView from './views/FichaTecnicaView';
 import Navbar from './components/Navbar';
@@ -69,6 +69,51 @@ const DEFAULT_AVATAR =
   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=256';
 const TABS_RESTRINGIDOS_CLIENTE = ['inventario', 'usuarios', 'medidor', 'configuracion'];
 
+const ORDENES_INICIALES_DEMO = [
+  {
+    idOrden: '1041',
+    cliente: 'Cliente Demo',
+    nombreCliente: 'Cliente Demo',
+    correoCliente: 'cliente@techserviceweb.com',
+    telefonoCliente: '(555) 987-6543',
+    ubicacionCliente: 'Calle 10 # 5-20',
+    direccionCliente: 'Calle 10 # 5-20',
+    tipoEquipo: 'Laptop',
+    marca: 'Lenovo',
+    modelo: 'ThinkPad T14',
+    numeroSerie: 'LN-T14-8821',
+    descripcionFalla: 'No enciende ni carga la batería con el cargador original.',
+    observaciones: 'Incluye cargador USB-C 65W.',
+    estado: 'EN PROCESO - Ingresado',
+    cerrada: false,
+    entregado: false,
+    tecnicoAsignado: '',
+    fechaCreacion: '2026-11-26T08:00:00.000Z',
+    createdAt: '2026-11-26T08:00:00.000Z',
+  },
+  {
+    idOrden: '1042',
+    cliente: 'Valeria Gómez',
+    nombreCliente: 'Valeria Gómez',
+    correoCliente: 'ladie7854@gmail.com',
+    telefonoCliente: '(555) 987-6543',
+    ubicacionCliente: 'Carrera 15 # 12-40',
+    direccionCliente: 'Carrera 15 # 12-40',
+    tipoEquipo: 'PC de Escritorio',
+    marca: 'ASUS',
+    modelo: 'Prime B550M-A',
+    numeroSerie: 'AS-B550-4410',
+    descripcionFalla: 'Reinicios aleatorios bajo carga y temperatura elevada en CPU.',
+    observaciones: 'Solo torre, sin monitor ni periféricos.',
+    estado: 'EN PROCESO - Ingresado',
+    cerrada: false,
+    entregado: false,
+    tecnicoAsignado: '',
+    fechaCreacion: '2026-11-26T08:05:00.000Z',
+    createdAt: '2026-11-26T08:05:00.000Z',
+  },
+];
+
 function normalizarTexto(valor = '') {
   return String(valor || '')
     .normalize('NFD')
@@ -80,6 +125,341 @@ function normalizarTexto(valor = '') {
 
 function esRolCliente(usuario) {
   return normalizarTexto(usuario?.rol).includes('client');
+}
+
+function leerOrdenIdDesdeUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const porQuery = params.get('orden') || params.get('order') || params.get('portal');
+    if (porQuery) return String(porQuery).trim();
+
+    const hash = String(window.location.hash || '');
+    const matchHash = hash.match(/portal\/([^/?#]+)/i);
+    if (matchHash?.[1]) return decodeURIComponent(matchHash[1]).trim();
+  } catch {
+    // Ignorar errores de URL
+  }
+  return '';
+}
+
+function construirEnlacePortalOrden(orden) {
+  const id = encodeURIComponent(String(orden?.idOrden || orden?._id || orden?.id || '').trim());
+  if (!id) return '';
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set('orden', decodeURIComponent(id));
+    return url.toString();
+  } catch {
+    return `?orden=${id}`;
+  }
+}
+
+function extraerAdjuntoDiagnostico(orden) {
+  if (!orden) return null;
+  const candidatos = [
+    orden.imagenDiagnostico,
+    orden.adjuntoDiagnostico,
+    orden.fotoDiagnostico,
+    orden.imagenAvance,
+    orden.adjuntoAvance,
+    orden.evidencia,
+    orden.imagen,
+    orden.foto,
+    orden.adjunto,
+    orden.diagnostico?.imagen,
+    orden.diagnostico?.adjunto,
+    orden.diagnostico?.foto,
+    orden.avance?.imagen,
+    orden.avance?.adjunto,
+  ];
+
+  for (const cand of candidatos) {
+    if (!cand) continue;
+    if (typeof cand === 'string' && cand.trim()) {
+      return { url: cand.trim(), nombre: 'Evidencia de diagnóstico' };
+    }
+    if (typeof cand === 'object') {
+      const url = cand.url || cand.dataUrl || cand.base64 || cand.preview || cand.src || '';
+      if (url) {
+        return {
+          url,
+          nombre: cand.nombre || cand.name || cand.fileName || 'Adjunto de diagnóstico',
+        };
+      }
+    }
+  }
+
+  if (Array.isArray(orden.adjuntos)) {
+    const primero = orden.adjuntos.find((a) =>
+      typeof a === 'string' ? a.trim() : Boolean(a?.url || a?.dataUrl || a?.base64 || a?.src)
+    );
+    if (primero) {
+      return typeof primero === 'string'
+        ? { url: primero, nombre: 'Adjunto de diagnóstico' }
+        : {
+            url: primero.url || primero.dataUrl || primero.base64 || primero.src,
+            nombre: primero.nombre || primero.name || 'Adjunto de diagnóstico',
+          };
+    }
+  }
+
+  return null;
+}
+
+function formatearFechaHora(fecha) {
+  if (!fecha) return 'No registrada';
+  const d = new Date(fecha);
+  if (Number.isNaN(d.getTime())) return String(fecha);
+  return d.toLocaleString('es-CO', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function PortalSeguimientoClienteView({
+  orden,
+  users = [],
+  onActualizarOrdenes,
+  onSalirPortal,
+}) {
+  const [copiado, setCopiado] = useState(false);
+  const [actualizando, setActualizando] = useState(false);
+
+  const refrescarOrden = async () => {
+    setActualizando(true);
+    try {
+      const res = await fetch(`${API_URL}/ordenes`);
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        const lista = Array.isArray(data) ? data : data?.ordenes || [];
+        if (Array.isArray(lista) && lista.length > 0 && onActualizarOrdenes) {
+          onActualizarOrdenes((prev) =>
+            fusionarOrdenes(prev, fusionarOrdenes(ORDENES_INICIALES_DEMO, lista))
+          );
+        }
+      }
+    } catch {
+      // Mantiene datos locales si no hay red
+    } finally {
+      setActualizando(false);
+    }
+  };
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      refrescarOrden();
+    }, 8000);
+    return () => clearInterval(timer);
+  }, []);
+
+  if (!orden) {
+    return (
+      <main className="max-w-3xl mx-auto px-4 py-12">
+        <div className="bg-white border border-gray-200 rounded-2xl p-8 text-center space-y-4 shadow-sm">
+          <h1 className="text-xl font-extrabold text-gray-900 uppercase">
+            Enlace de seguimiento no encontrado
+          </h1>
+          <p className="text-xs text-gray-600">
+            No encontramos una orden asociada a este enlace. Verifica con el taller que el código
+            de la orden sea correcto.
+          </p>
+          {onSalirPortal && (
+            <button
+              type="button"
+              onClick={onSalirPortal}
+              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer"
+            >
+              Ir al inicio de sesión
+            </button>
+          )}
+        </div>
+      </main>
+    );
+  }
+
+  const tecnicoNombre = orden.tecnicoAsignado || 'Por asignar';
+  const tecnicoObj = users.find(
+    (u) => normalizarTexto(u?.nombre) === normalizarTexto(orden.tecnicoAsignado)
+  );
+  const mesaTrabajo =
+    orden.mesaTrabajo ||
+    orden.mesaAsignada ||
+    tecnicoObj?.mesaTrabajo ||
+    tecnicoObj?.bancoTrabajo ||
+    'Por asignar';
+
+  const estadoActual = String(orden.estadoFinal || orden.estado || 'EN PROCESO - Ingresado')
+    .replace(/^\[|\]$/g, '')
+    .trim();
+
+  const detalleDiagnostico =
+    orden.detalleDiagnostico ||
+    orden.diagnosticoTecnico ||
+    orden.diagnostico?.detalle ||
+    orden.diagnostico ||
+    'Aún no se ha registrado un diagnóstico técnico detallado.';
+
+  const proximosPasos =
+    orden.proximosPasos ||
+    orden.accionesSeguir ||
+    orden.diagnostico?.proximosPasos ||
+    orden.notasTecnicas ||
+    orden.observaciones ||
+    'Sin notas adicionales por el momento.';
+
+  const adjunto = extraerAdjuntoDiagnostico(orden);
+  const enlaceCompartible = construirEnlacePortalOrden(orden);
+
+  const copiarEnlace = async () => {
+    try {
+      await navigator.clipboard.writeText(enlaceCompartible);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2500);
+    } catch {
+      setCopiado(false);
+    }
+  };
+
+  return (
+    <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm flex flex-wrap items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-extrabold uppercase tracking-wider text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full">
+              Acceso directo sin contraseña
+            </span>
+            <span className="text-xs font-semibold text-gray-500">
+              Orden #{orden.idOrden || orden._id}
+            </span>
+          </div>
+          <h1 className="text-2xl font-extrabold text-gray-900 uppercase">
+            Seguimiento en Tiempo Real — {[orden.tipoEquipo, orden.marca, orden.modelo].filter(Boolean).join(' ') || 'Equipo'}
+          </h1>
+          <p className="text-xs text-gray-600">
+            Cliente: <strong className="text-gray-900">{orden.cliente || orden.nombreCliente || 'Cliente'}</strong> • Ingreso:{' '}
+            <strong className="text-gray-900">
+              {formatearFechaHora(orden.fechaCreacion || orden.createdAt)}
+            </strong>
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={refrescarOrden}
+            disabled={actualizando}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-800 transition cursor-pointer"
+          >
+            {actualizando ? 'Actualizando...' : 'Actualizar ahora'}
+          </button>
+          <button
+            type="button"
+            onClick={copiarEnlace}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white transition cursor-pointer"
+          >
+            {copiado ? '✓ Enlace copiado' : 'Copiar enlace del cliente'}
+          </button>
+        </div>
+      </div>
+
+      {/* Estado y asignación */}
+      <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm space-y-1">
+          <span className="text-[11px] font-bold uppercase text-gray-400">
+            Proceso / Estado actual
+          </span>
+          <p className="text-sm font-extrabold text-blue-700">{estadoActual}</p>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm space-y-1">
+          <span className="text-[11px] font-bold uppercase text-gray-400">
+            Técnico encargado
+          </span>
+          <p className="text-sm font-extrabold text-gray-900">{tecnicoNombre}</p>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm space-y-1">
+          <span className="text-[11px] font-bold uppercase text-gray-400">
+            Mesa de trabajo
+          </span>
+          <p className="text-sm font-extrabold text-gray-900">{mesaTrabajo}</p>
+        </div>
+      </section>
+
+      {/* Fallas, diagnóstico y notas */}
+      <section className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-5">
+        <h2 className="text-sm font-extrabold text-gray-900 uppercase border-b border-gray-100 pb-3">
+          Fallas, Diagnóstico y Notas del Técnico
+        </h2>
+
+        <div className="space-y-1.5">
+          <h3 className="text-xs font-bold text-gray-700 uppercase">
+            Falla reportada al ingresar
+          </h3>
+          <p className="text-xs text-gray-800 bg-gray-50 border border-gray-200/80 rounded-xl p-3.5 leading-relaxed">
+            {orden.descripcionFalla || 'Sin descripción de falla registrada.'}
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <h3 className="text-xs font-bold text-gray-700 uppercase">
+            Detalle del diagnóstico técnico
+          </h3>
+          <p className="text-xs text-gray-800 bg-gray-50 border border-gray-200/80 rounded-xl p-3.5 leading-relaxed">
+            {detalleDiagnostico}
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <h3 className="text-xs font-bold text-gray-700 uppercase">
+            Próximos pasos / Notas del encargado
+          </h3>
+          <p className="text-xs text-gray-800 bg-gray-50 border border-gray-200/80 rounded-xl p-3.5 leading-relaxed">
+            {proximosPasos}
+          </p>
+        </div>
+      </section>
+
+      {/* Evidencia / Imagen del diagnóstico */}
+      <section className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-4">
+        <h2 className="text-sm font-extrabold text-gray-900 uppercase border-b border-gray-100 pb-3">
+          Foto / Adjunto Subido en Diagnóstico
+        </h2>
+
+        {!adjunto ? (
+          <p className="text-xs text-gray-500 italic">
+            El técnico aún no ha subido ninguna imagen o documento de diagnóstico para esta orden.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-gray-700">{adjunto.nombre}</p>
+            {adjunto.url.startsWith('data:image/') ||
+            /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(adjunto.url) ? (
+              <div className="border border-gray-200 rounded-xl overflow-hidden bg-gray-50 max-w-xl">
+                <img
+                  src={adjunto.url}
+                  alt={adjunto.nombre}
+                  className="w-full max-h-96 object-contain"
+                />
+              </div>
+            ) : (
+              <a
+                href={adjunto.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-block px-4 py-2 rounded-xl bg-blue-50 text-blue-700 border border-blue-200 text-xs font-bold hover:bg-blue-100 transition"
+              >
+                Abrir archivo adjunto ({adjunto.nombre})
+              </a>
+            )}
+          </div>
+        )}
+      </section>
+    </main>
+  );
 }
 
 function puedeAccederAOrden(orden, usuario) {
@@ -124,6 +504,72 @@ function loadInitialUsers() {
   return usersList;
 }
 
+function asegurarClientesDesdeOrdenes(listaOrdenes = [], listaUsuarios = []) {
+  const mapa = new Map();
+
+  (Array.isArray(listaUsuarios) ? listaUsuarios : []).forEach((u, idx) => {
+    const key = String(u?.email || u?.id || `u-${idx}`).trim().toLowerCase();
+    if (key) mapa.set(key, u);
+  });
+
+  (Array.isArray(listaOrdenes) ? listaOrdenes : []).forEach((ord, idx) => {
+    const nombre = String(ord?.cliente || ord?.nombreCliente || '').trim();
+    const correoRaw = String(
+      ord?.correoCliente || ord?.emailCliente || ord?.correo || ''
+    )
+      .trim()
+      .toLowerCase();
+
+    if (!nombre && !correoRaw) return;
+
+    const slug = normalizarTexto(nombre || `cliente-${idx}`).replace(/[^a-z0-9]+/g, '.');
+    const correo = correoRaw || `${slug || 'cliente'}.${ord?.idOrden || idx}@cliente.local`;
+
+    const yaExiste = Array.from(mapa.values()).some((u) => {
+      const uMail = String(u?.email || '').trim().toLowerCase();
+      const uNom = normalizarTexto(u?.nombre);
+      return (correoRaw && uMail === correoRaw) || (nombre && uNom === normalizarTexto(nombre));
+    });
+
+    if (!yaExiste) {
+      mapa.set(correo, {
+        id: `cli-ord-${ord?._id || ord?.idOrden || idx + 1}`,
+        nombre: nombre || correo,
+        email: correo,
+        password: DEFAULT_USER_PASSWORD,
+        rol: 'Cliente',
+        telefono: ord?.telefonoCliente || ord?.telefono || 'No registrado',
+        direccion:
+          ord?.ubicacionCliente || ord?.direccionCliente || ord?.direccion || 'No registrada',
+        ubicacion:
+          ord?.ubicacionCliente || ord?.direccionCliente || ord?.direccion || 'No registrada',
+        avatar: DEFAULT_AVATAR,
+      });
+    }
+  });
+
+  return Array.from(mapa.values());
+}
+
+function cargarUsuariosConClientes() {
+  const baseUsers = loadInitialUsers();
+  const mapa = new Map();
+
+  (Array.isArray(baseUsers) ? baseUsers : []).forEach((u, idx) => {
+    const key = String(u?.email || u?.id || idx).trim().toLowerCase();
+    if (key) mapa.set(key, u);
+  });
+
+  (Array.isArray(usersList) ? usersList : []).forEach((u, idx) => {
+    const key = String(u?.email || u?.id || `base-${idx}`).trim().toLowerCase();
+    if (key && !mapa.has(key)) {
+      mapa.set(key, u);
+    }
+  });
+
+  return asegurarClientesDesdeOrdenes(ORDENES_INICIALES_DEMO, Array.from(mapa.values()));
+}
+
 function loadSavedSessionUser() {
   try {
     const savedUser = localStorage.getItem('userData');
@@ -165,7 +611,7 @@ function fusionarOrdenes(locales = [], remotas = []) {
     const k = getOrdenKey(o);
     if (!k) return;
     const previa = mapa.get(k);
-    const yaCerradaLocal = previa?.cerrada === true;
+    const yaCerradaLocal = previa?.cerrada === true || previa?.entregado === true;
     const tecnicoPrevio = String(previa?.tecnicoAsignado || '').trim();
     const tecnicoRemoto = String(o?.tecnicoAsignado || '').trim();
     const tieneTecnicoRemoto =
@@ -181,6 +627,9 @@ function fusionarOrdenes(locales = [], remotas = []) {
         ? previa.estadoFinal || previa.estado
         : o.estadoFinal || previa?.estadoFinal,
       cerrada: yaCerradaLocal ? true : Boolean(o.cerrada),
+      entregado: yaCerradaLocal ? true : Boolean(o.entregado || o.cerrada),
+      mesaTrabajo: previa?.mesaTrabajo || o?.mesaTrabajo || null,
+      fechaSalida: previa?.fechaSalida || o?.fechaSalida || null,
       tecnicoAsignado: tieneTecnicoRemoto ? tecnicoRemoto : tecnicoPrevio || o.tecnicoAsignado || '',
     });
   });
@@ -188,18 +637,29 @@ function fusionarOrdenes(locales = [], remotas = []) {
   return Array.from(mapa.values());
 }
 
-export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(loadSavedAuthState);
-  const [users, setUsers] = useState(loadInitialUsers);
-  const [currentUser, setCurrentUser] = useState(loadSavedSessionUser);
-  const [ordenes, setOrdenes] = useState(() => {
-    try {
-      const saved = localStorage.getItem(ORDENES_STORAGE_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
+function cargarOrdenesIniciales() {
+  try {
+    const saved = localStorage.getItem(ORDENES_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return fusionarOrdenes(parsed, ORDENES_INICIALES_DEMO);
+      }
     }
-  });
+  } catch {
+    // Si falla localStorage, usar órdenes iniciales
+  }
+  return ORDENES_INICIALES_DEMO;
+}
+
+export default function App() {
+  const [portalOrdenId, setPortalOrdenId] = useState(leerOrdenIdDesdeUrl);
+  const [isAuthenticated, setIsAuthenticated] = useState(() =>
+    leerOrdenIdDesdeUrl() ? true : loadSavedAuthState()
+  );
+  const [users, setUsers] = useState(cargarUsuariosConClientes);
+  const [currentUser, setCurrentUser] = useState(loadSavedSessionUser);
+  const [ordenes, setOrdenes] = useState(cargarOrdenesIniciales);
   const [inventario, setInventario] = useState(() => {
     try {
       const saved = localStorage.getItem(INVENTARIO_STORAGE_KEY);
@@ -236,17 +696,63 @@ export default function App() {
   });
   const [recoveryEmail, setRecoveryEmail] = useState('');
   const [authView, setAuthView] = useState('login');
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState(() =>
+    leerOrdenIdDesdeUrl() ? 'portalCliente' : 'dashboard'
+  );
   const [currentView, setCurrentView] = useState('main');
   const [cancelMessage, setCancelMessage] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
 
-  const activeUser =
-    isAuthenticated && currentUser?.email
-      ? users.find(
-          (u) => (u.email || '').toLowerCase() === (currentUser.email || '').toLowerCase()
-        ) || currentUser
-      : currentUser;
+  const ordenPortalActual = useMemo(() => {
+    if (!portalOrdenId) return null;
+    const target = normalizarTexto(portalOrdenId);
+    return (
+      ordenes.find(
+        (o) =>
+          normalizarTexto(o?.idOrden) === target ||
+          normalizarTexto(o?._id) === target ||
+          normalizarTexto(o?.id) === target
+      ) || null
+    );
+  }, [portalOrdenId, ordenes]);
+
+  const portalUsuarioInvitado = useMemo(() => {
+    if (!portalOrdenId) return null;
+    return {
+      id: `portal-${portalOrdenId}`,
+      nombre: ordenPortalActual?.cliente || ordenPortalActual?.nombreCliente || 'Cliente',
+      email: ordenPortalActual?.correoCliente || '',
+      rol: 'Cliente',
+      avatar: DEFAULT_AVATAR,
+    };
+  }, [portalOrdenId, ordenPortalActual]);
+
+  const activeUser = portalUsuarioInvitado
+    ? portalUsuarioInvitado
+    : isAuthenticated && currentUser?.email
+    ? users.find(
+        (u) => (u.email || '').toLowerCase() === (currentUser.email || '').toLowerCase()
+      ) || currentUser
+    : currentUser;
+
+  useEffect(() => {
+    const handleUrlChange = () => {
+      const idEnUrl = leerOrdenIdDesdeUrl();
+      setPortalOrdenId(idEnUrl);
+      if (idEnUrl) {
+        setIsAuthenticated(true);
+        setActiveTab('portalCliente');
+        setCurrentView('main');
+      }
+    };
+
+    window.addEventListener('popstate', handleUrlChange);
+    window.addEventListener('hashchange', handleUrlChange);
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      window.removeEventListener('hashchange', handleUrlChange);
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -270,6 +776,11 @@ export default function App() {
     } catch {
       // Ignorar si localStorage no está disponible
     }
+  }, [ordenes]);
+
+  useEffect(() => {
+    if (!Array.isArray(ordenes) || ordenes.length === 0) return;
+    setUsers((prev) => asegurarClientesDesdeOrdenes(ordenes, prev));
   }, [ordenes]);
 
   useEffect(() => {
@@ -297,7 +808,7 @@ export default function App() {
   }, [entradasStock]);
 
   useEffect(() => {
-    if (!isAuthenticated || !currentUser?.email) return;
+    if (portalUsuarioInvitado || !isAuthenticated || !currentUser?.email) return;
     const updatedMatch = users.find(
       (u) => (u.email || '').toLowerCase() === (currentUser.email || '').toLowerCase()
     );
@@ -308,7 +819,7 @@ export default function App() {
         // Ignorar si localStorage no está disponible
       }
     }
-  }, [users, isAuthenticated, currentUser]);
+  }, [users, isAuthenticated, currentUser, portalUsuarioInvitado]);
 
   useEffect(() => {
     let active = true;
@@ -326,7 +837,18 @@ export default function App() {
         if (usersRes.ok) {
           const mongoUsers = await usersRes.json();
           if (active && Array.isArray(mongoUsers) && mongoUsers.length > 0) {
-            setUsers(mongoUsers);
+            setUsers((prev) => {
+              const mapa = new Map();
+              mongoUsers.forEach((u, idx) => {
+                const k = String(u?.email || u?.id || idx).trim().toLowerCase();
+                if (k) mapa.set(k, u);
+              });
+              (Array.isArray(prev) ? prev : []).forEach((u, idx) => {
+                const k = String(u?.email || u?.id || `local-${idx}`).trim().toLowerCase();
+                if (k && !mapa.has(k)) mapa.set(k, u);
+              });
+              return Array.from(mapa.values());
+            });
           }
         }
 
@@ -343,7 +865,9 @@ export default function App() {
             ? mongoOrdenes
             : mongoOrdenes?.ordenes || [];
           if (active && Array.isArray(listaOrdenes) && listaOrdenes.length > 0) {
-            setOrdenes((prev) => fusionarOrdenes(prev, listaOrdenes));
+            setOrdenes((prev) =>
+              fusionarOrdenes(prev, fusionarOrdenes(ORDENES_INICIALES_DEMO, listaOrdenes))
+            );
           }
         }
 
@@ -378,10 +902,88 @@ export default function App() {
   }, []);
 
   const resolverPestanaSegura = (tab) => {
+    if (portalUsuarioInvitado) return 'portalCliente';
     if (esRolCliente(activeUser) && TABS_RESTRINGIDOS_CLIENTE.includes(tab)) {
       return 'ordenes';
     }
     return tab;
+  };
+
+  const handleRegistrarClienteDesdeOrden = (datosCliente = {}, stamp = '') => {
+    const nombreLimpio = String(datosCliente?.nombre || datosCliente?.cliente || '').trim();
+    const correoLimpio = String(
+      datosCliente?.email || datosCliente?.correo || datosCliente?.correoCliente || ''
+    )
+      .trim()
+      .toLowerCase();
+    const telefonoLimpio = String(
+      datosCliente?.telefono || datosCliente?.telefonoCliente || ''
+    ).trim();
+    const ubicacionLimpia = String(
+      datosCliente?.direccion ||
+        datosCliente?.ubicacion ||
+        datosCliente?.ubicacionCliente ||
+        datosCliente?.direccionCliente ||
+        ''
+    ).trim();
+
+    if (!nombreLimpio && !correoLimpio) return;
+
+    const claveBase = correoLimpio || normalizarTexto(nombreLimpio).replace(/\s+/g, '.');
+
+    setUsers((prevUsers) => {
+      const idxExistente = prevUsers.findIndex((u) => {
+        const correoU = String(u?.email || '').trim().toLowerCase();
+        const nombreU = normalizarTexto(u?.nombre);
+        return (
+          (correoLimpio && correoU === correoLimpio) ||
+          (!correoLimpio && nombreLimpio && nombreU === normalizarTexto(nombreLimpio))
+        );
+      });
+
+      let nextUsers;
+      if (idxExistente >= 0) {
+        nextUsers = prevUsers.map((u, i) =>
+          i === idxExistente
+            ? {
+                ...u,
+                nombre: nombreLimpio || u.nombre,
+                email: correoLimpio || u.email,
+                telefono: telefonoLimpio || u.telefono || '',
+                direccion: ubicacionLimpia || u.direccion || '',
+                ubicacion: ubicacionLimpia || u.ubicacion || u.direccion || '',
+                rol: u.rol || 'Cliente',
+              }
+            : u
+        );
+      } else {
+        const nuevoCliente = {
+          id: stamp || Date.now(),
+          nombre: nombreLimpio || correoLimpio,
+          email: correoLimpio || `${claveBase}@cliente.local`,
+          password: DEFAULT_USER_PASSWORD,
+          rol: 'Cliente',
+          telefono: telefonoLimpio,
+          direccion: ubicacionLimpia,
+          ubicacion: ubicacionLimpia,
+          avatar: DEFAULT_AVATAR,
+        };
+        nextUsers = [...prevUsers, nuevoCliente];
+        fetch(`${API_URL}/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(nuevoCliente),
+        }).catch(() => {});
+      }
+
+      try {
+        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(nextUsers));
+      } catch {
+        // Ignorar si localStorage no está disponible
+      }
+
+      return nextUsers;
+    });
   };
 
   const handleSaveSolicitudCompra = (nuevaSolicitud) => {
@@ -498,9 +1100,16 @@ export default function App() {
     if (!ordenActual || !tecnicoNombre) return;
 
     const ordenId = ordenActual._id || ordenActual.idOrden;
+    const tecnicoObj = users.find(
+      (u) => normalizarTexto(u?.nombre) === normalizarTexto(tecnicoNombre)
+    );
+    const mesaTecnico =
+      tecnicoObj?.mesaTrabajo || tecnicoObj?.bancoTrabajo || ordenActual.mesaTrabajo || null;
+
     const ordenActualizada = {
       ...ordenActual,
       tecnicoAsignado: tecnicoNombre,
+      mesaTrabajo: mesaTecnico,
     };
 
     setSelectedOrder(ordenActualizada);
@@ -525,18 +1134,27 @@ export default function App() {
       const res = await fetch(`${API_URL}/ordenes/${ordenId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tecnicoAsignado: tecnicoNombre }),
+        body: JSON.stringify({
+          tecnicoAsignado: tecnicoNombre,
+          mesaTrabajo: mesaTecnico,
+        }),
       });
       if (res.ok) {
         const guardada = await res.json().catch(() => null);
         if (guardada && (guardada._id || guardada.idOrden || guardada.orden)) {
           const doc = guardada.orden || guardada;
           const tecnicoFinal = doc.tecnicoAsignado || tecnicoNombre;
-          setSelectedOrder((prev) => ({ ...prev, ...doc, tecnicoAsignado: tecnicoFinal }));
+          const mesaFinal = doc.mesaTrabajo || mesaTecnico;
+          setSelectedOrder((prev) => ({
+            ...prev,
+            ...doc,
+            tecnicoAsignado: tecnicoFinal,
+            mesaTrabajo: mesaFinal,
+          }));
           setOrdenes((prev) =>
             prev.map((o) =>
               getOrdenKey(o) === String(ordenId)
-                ? { ...o, ...doc, tecnicoAsignado: tecnicoFinal }
+                ? { ...o, ...doc, tecnicoAsignado: tecnicoFinal, mesaTrabajo: mesaFinal }
                 : o
             )
           );
@@ -544,6 +1162,55 @@ export default function App() {
       }
     } catch {
       // Queda persistido en estado y localStorage aunque el PATCH responda 404 o falle
+    }
+  };
+
+  const handleAssignMesaTrabajo = (targetUserId, nuevaMesa) => {
+    const roleLower = (activeUser?.rol || '').toLowerCase();
+    if (!roleLower.includes('admin')) return;
+
+    const mesaLimpia = String(nuevaMesa || '').trim() || null;
+
+    setUsers((prevUsers) => {
+      const nextUsers = prevUsers.map((u) => {
+        const coincide =
+          String(u.id) === String(targetUserId) || String(u._id) === String(targetUserId);
+        if (!coincide) return u;
+        return {
+          ...u,
+          mesaTrabajo: mesaLimpia,
+        };
+      });
+
+      try {
+        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(nextUsers));
+        const updatedTarget = nextUsers.find(
+          (u) => String(u.id) === String(targetUserId) || String(u._id) === String(targetUserId)
+        );
+        if (
+          updatedTarget &&
+          currentUser?.email &&
+          (updatedTarget.email || '').toLowerCase() === (currentUser.email || '').toLowerCase()
+        ) {
+          localStorage.setItem('userData', JSON.stringify(updatedTarget));
+        }
+      } catch {
+        // Ignorar si localStorage no está disponible
+      }
+
+      return nextUsers;
+    });
+
+    const objetivo = users.find(
+      (u) => String(u.id) === String(targetUserId) || String(u._id) === String(targetUserId)
+    );
+    const identifier = objetivo?._id || objetivo?.id || targetUserId;
+    if (identifier) {
+      fetch(`${API_URL}/users/${identifier}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mesaTrabajo: mesaLimpia }),
+      }).catch(() => {});
     }
   };
 
@@ -707,6 +1374,7 @@ export default function App() {
       rol: finalRole,
       telefono: '',
       direccion: (targetReq.taller || '').trim(),
+      mesaTrabajo: null,
       avatar: DEFAULT_AVATAR,
     };
 
@@ -856,6 +1524,16 @@ export default function App() {
     } catch {
       // Ignorar si localStorage no está disponible
     }
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('orden');
+      url.searchParams.delete('order');
+      url.searchParams.delete('portal');
+      window.history.replaceState({}, '', url.toString());
+    } catch {
+      // Ignorar errores de history
+    }
+    setPortalOrdenId('');
     setIsAuthenticated(false);
     setCurrentUser(mockUser);
     setAuthView('login');
@@ -883,9 +1561,22 @@ export default function App() {
       ? ordenObjetivo.seguimiento
       : [];
 
+    const tecnicoAsignadoObj = users.find(
+      (u) => normalizarTexto(u?.nombre) === normalizarTexto(ordenObjetivo?.tecnicoAsignado)
+    );
+    const mesaMomento =
+      ordenObjetivo?.mesaTrabajo ||
+      tecnicoAsignadoObj?.mesaTrabajo ||
+      tecnicoAsignadoObj?.bancoTrabajo ||
+      null;
+
+    const fechaCierreIso = stamp
+      ? new Date(stamp).toISOString()
+      : datosCierre?.fechaCierre || new Date().toISOString();
+
     const eventoCierre = {
       id: `cierre-${keyObjetivo || 'orden'}-${stamp || 'ok'}`,
-      fecha: stamp ? new Date(stamp).toISOString() : (datosCierre?.fechaCierre || ''),
+      fecha: fechaCierreIso,
       titulo: `Orden cerrada (${estadoLimpio})`,
       responsable: activeUser?.nombre || 'Usuario',
       notaTecnica: datosCierre?.comentariosFinales || '',
@@ -895,6 +1586,9 @@ export default function App() {
       estado: estadoLimpio,
       estadoFinal: estadoLimpio,
       cerrada: true,
+      entregado: true,
+      mesaTrabajo: mesaMomento,
+      fechaSalida: fechaCierreIso,
       comentariosCierre: datosCierre?.comentariosFinales || '',
       garantiaAplicable: datosCierre?.garantiaAplicable || '',
       montoTotal: datosCierre?.montoTotal ?? ordenObjetivo.montoTotal ?? 0,
@@ -937,7 +1631,7 @@ export default function App() {
   return (
     <div className="bg-gray-50 min-h-screen flex flex-col justify-between font-sans text-gray-800">
       <div>
-        {isAuthenticated && (
+        {isAuthenticated && !portalUsuarioInvitado && (
           <Navbar
             activeTab={activeTab}
             setActiveTab={handleTabChange}
@@ -951,7 +1645,14 @@ export default function App() {
           />
         )}
 
-        {!isAuthenticated ? (
+        {portalUsuarioInvitado ? (
+          <PortalSeguimientoClienteView
+            orden={ordenPortalActual}
+            users={users}
+            onActualizarOrdenes={setOrdenes}
+            onSalirPortal={handleLogout}
+          />
+        ) : !isAuthenticated ? (
           <>
             {authView === 'login' && (
               <LoginView
@@ -1036,11 +1737,25 @@ export default function App() {
             {activeTab === 'ordenes' && currentView === 'nueva' && !esRolCliente(activeUser) && (
               <NuevaOrdenView
                 currentUser={activeUser}
+                users={users}
+                onRegistrarCliente={(datosCliente) =>
+                  handleRegistrarClienteDesdeOrden(datosCliente, Date.now())
+                }
                 onBack={handleCancelNewOrder}
                 onSaveSuccess={(createdOrder) => {
                   if (createdOrder && (createdOrder._id || createdOrder.idOrden || createdOrder.orden)) {
                     const doc = createdOrder.orden || createdOrder;
                     setOrdenes((prev) => fusionarOrdenes([doc], prev));
+                    handleRegistrarClienteDesdeOrden(
+                      {
+                        nombre: doc?.cliente || doc?.nombreCliente,
+                        email: doc?.correoCliente || doc?.emailCliente || doc?.correo,
+                        telefono: doc?.telefonoCliente || doc?.telefono,
+                        direccion:
+                          doc?.ubicacionCliente || doc?.direccionCliente || doc?.direccion,
+                      },
+                      Date.now()
+                    );
                   }
                   setCurrentView('main');
                 }}
@@ -1242,7 +1957,9 @@ export default function App() {
               <GestionUsuariosView
                 currentUser={activeUser}
                 users={users}
+                ordenes={ordenes}
                 accessRequests={accessRequests}
+                onAssignMesaTrabajo={handleAssignMesaTrabajo}
                 onApproveRequest={(reqId, rol) =>
                   handleApproveRequest(reqId, rol, Date.now())
                 }

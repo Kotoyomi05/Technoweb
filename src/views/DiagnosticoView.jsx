@@ -19,6 +19,7 @@ function leerArchivoComoDataUrl(file) {
         tipo: file.type || 'application/octet-stream',
         tamano: file.size,
         dataUrl: reader.result,
+        url: reader.result,
       });
     };
     reader.onerror = () => reject(new Error(`No se pudo leer el archivo ${file.name}`));
@@ -65,6 +66,8 @@ export default function DiagnosticoView({
       estadoInicialSelect = 'Pendiente de Aprobación';
     } else if (estadoLower.includes('repuest')) {
       estadoInicialSelect = 'Esperando Repuestos';
+    } else if (estadoLower.includes('inconveniente')) {
+      estadoInicialSelect = 'Ha surgido un inconveniente';
     } else if (estadoLower.includes('finaliz')) {
       estadoInicialSelect = 'Finalizado';
     }
@@ -128,14 +131,27 @@ export default function DiagnosticoView({
       currentUser?.nombre || ordenData.tecnicoAsignado || 'Usuario'
     );
 
+    const adjuntosPrevios = Array.isArray(ordenData.adjuntos) ? ordenData.adjuntos : [];
+    const adjuntosCombinados = [...adjuntosPrevios, ...formData.adjuntos];
+    const ultimoAdjunto =
+      formData.adjuntos[formData.adjuntos.length - 1] ||
+      ordenData.imagenDiagnostico ||
+      ordenData.adjuntoDiagnostico ||
+      adjuntosCombinados[adjuntosCombinados.length - 1] ||
+      null;
+
+    const detalleFinal =
+      detalleLimpio || ordenData.detalleDiagnostico || ordenData.notaTecnica || '';
+    const proximosFinales = proximosLimpios || ordenData.proximosPasos || '';
+
     const nuevoPasoSeguimiento = {
       id: Date.now(),
       fecha: new Date().toISOString(),
       titulo: `Avance / Diagnóstico (${formData.estadoActualizado})`,
       accion: `Avance / Diagnóstico (${formData.estadoActualizado})`,
       responsable: responsableSinCargo,
-      notaTecnica: detalleLimpio,
-      proximosPasos: proximosLimpios,
+      notaTecnica: detalleFinal,
+      proximosPasos: proximosFinales,
       adjuntos: formData.adjuntos,
     };
 
@@ -146,13 +162,16 @@ export default function DiagnosticoView({
 
     const payloadActualizacion = {
       estado: formData.estadoActualizado,
-      detalleDiagnostico: detalleLimpio,
-      notaTecnica: detalleLimpio || ordenData.notaTecnica || '',
-      proximosPasos: proximosLimpios,
-      adjuntos: [
-        ...(Array.isArray(ordenData.adjuntos) ? ordenData.adjuntos : []),
-        ...formData.adjuntos,
-      ],
+      detalleDiagnostico: detalleFinal,
+      notaTecnica: detalleFinal,
+      proximosPasos: proximosFinales,
+      adjuntos: adjuntosCombinados,
+      ...(ultimoAdjunto
+        ? {
+            imagenDiagnostico: ultimoAdjunto,
+            adjuntoDiagnostico: ultimoAdjunto,
+          }
+        : {}),
       seguimiento: seguimientoActualizado,
     };
 
@@ -177,6 +196,13 @@ export default function DiagnosticoView({
               ...docFinal,
               ...servidorDoc,
               estado: servidorDoc.estado || payloadActualizacion.estado,
+              detalleDiagnostico:
+                servidorDoc.detalleDiagnostico || payloadActualizacion.detalleDiagnostico,
+              proximosPasos: servidorDoc.proximosPasos || payloadActualizacion.proximosPasos,
+              imagenDiagnostico:
+                servidorDoc.imagenDiagnostico || payloadActualizacion.imagenDiagnostico || null,
+              adjuntoDiagnostico:
+                servidorDoc.adjuntoDiagnostico || payloadActualizacion.adjuntoDiagnostico || null,
               seguimiento:
                 Array.isArray(servidorDoc.seguimiento) && servidorDoc.seguimiento.length > 0
                   ? servidorDoc.seguimiento
@@ -290,6 +316,7 @@ export default function DiagnosticoView({
                 <option value="En Proceso">En Proceso</option>
                 <option value="Pendiente de Aprobación">Pendiente de Aprobación</option>
                 <option value="Esperando Repuestos">Esperando Repuestos</option>
+                <option value="Ha surgido un inconveniente">Ha surgido un inconveniente</option>
                 <option value="Finalizado">Finalizado</option>
               </select>
             </div>
